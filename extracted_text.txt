@@ -1,0 +1,940 @@
+                                        TableNet: A Large-Scale Table Dataset with LLM-Powered Autonomous
+                                                                               Generation
+
+                                                                                Ruilin Zhang, Kai Yang*
+
+                                                                    School of Computer Science and Technology, Tongji University
+                                                                               4800 Cao'an Road, Shanghai, 201804, China
+
+arXiv:2604.13041v1 [cs.DB] 27 Feb 2026                                Abstract                                frequently include complex visual patterns--merged cells,
+                                                                                                              missing borders, inconsistent alignments, or heterogeneous
+                                           Table Structure Recognition (TSR) requires the logical rea-        color schemes, which brings challenges to the logical rea-
+                                           soning ability of large language models (LLMs) to handle           soning ability to large language models (LLM) when parse
+                                           complex table layouts, but current datasets are limited in scale   the structure of tables. However, existing datasets are often
+                                           and quality, hindering effective use of this reasoning capac-      limited in scale, diversity, and annotation quality, making it
+                                           ity. We thus present TableNet dataset, a new table structure       hard to fully exploit the logical reasoning ability of LLMs.
+                                           recognition dataset collected and generated through multiple
+                                           sources. Central to our approach is the first LLM-powered             To address these limitations, we introduce the TableNet
+                                           autonomous table generation and recognition multi-agent            dataset and the first LLM-powered autonomous table gen-
+                                           system that we developed. The generation part of our system        eration and recognition multi-agent system. By integrating
+                                           integrates controllable visual, structural, and semantic param-    controllable parameters, the system is capable of generat-
+                                           eters into the synthesis of table images. It facilitates the cre-  ing a diverse range of tables with minimal human interven-
+                                           ation of a wide array of semantically coherent tables, adapt-      tion. Unlike traditional dataset collection methods, our sys-
+                                           able to user-defined configurations along with annotations,        tem leverages prior knowledge embedded in LLMs and is
+                                           thereby supporting large-scale and detailed dataset construc-      user-configurable, enabling the generation scalable, control-
+                                           tion. This capability enables a comprehensive and nuanced          lable, semantically coherent tables and corresponding anno-
+                                           table image annotation taxonomy, potentially advancing re-         tations.
+                                           search in table-related domains. In contrast to traditional
+                                           data collection methods, This approach facilitates the theo-          The broad style and domain coverage of TableNet mo-
+                                           retically infinite, domain-agnostic, and style-flexible genera-    tivates the use of active learning, which selects maximally
+                                           tion of table images, ensuring both efficiency and precision.      informative samples for model training and could be used
+                                           The recognition part of our system is a diversity-based active     for data filtering in many fields like intrusion/anomaly de-
+                                           learning paradigm that utilizes tables from multiple sources       tection(Zhu and Yang 2019; Yang et al. 2018), computer
+                                           and selectively samples most informative data to finetune a        vision(Beluch et al. 2018), etc. This procedure can be de-
+                                           model, achieving a competitive performance on TableNet test        scribed using a five-step algorithm shown in Algorithm
+                                           set while reducing training samples by a large margin com-         1(Xia et al. 2025), that is initialize, query, annotate, train and
+                                           pared with baselines, and a much higher performance on web-        stop. The existing active learning method can be categorized
+                                           crawled real-world tables compared with models trained on          into two main streams: diversity-based and uncertainty-
+                                           predominant table datasets. To the best of our knowledge, this     based. Diversity-based methods(Gissin and Shalev-Shwartz
+                                           is the first work which employs the concept of active learn-       2019; Sener and Savarese 2017) aims to select a subset rep-
+                                           ing into the structure recognition of tables which is diverse in   resentative of overall distribution. Uncertainty-based meth-
+                                           numbers of rows or columns, merged cells, cell contents, etc,      ods(Beluch et al. 2018; Gal, Islam, and Ghahramani 2017;
+                                           which fits better for diversity-based active learning.             Yoo and Kweon 2019) prioritize samples that model cannot
+                                                                                                              predict for sure. Diversity-based active learning is particu-
+                                        Datasets -- https://huggingface.co/datasets/                          larly suitable for heterogeneous table structures. By actively
+                                           AnonymousUser123123/TableNet/tree/main                             selecting training instances from multiple sources, our TSR
+                                                                                                              model achieves competitive performance on the TableNet
+                                                              Introduction                                    test set while requiring substantially fewer samples and sig-
+                                                                                                              nificantly outperforms models trained on existing datasets
+                                        Table Structure Recognition (TSR) aims to recover the log-            when evaluated on unseen real-world tables.
+                                        ical structure of tables from images. Despite recent ad-
+                                        vances, it remains challenging due to the wide variability               Contributions of this paper can summarized as follows.
+                                        in table layouts, styles, and semantics. Real-world tables
+                                                                                                               · We release TableNet, a large-scale table dataset com-
+                                            *Corresponding author.                                               posed of synthetic tables generated by a controllable
+                                        Copyright © 2026, Association for the Advancement of Artificial          LLM-based multi-agent system, real-world tables col-
+                                        Intelligence (www.aaai.org). All rights reserved.                        lected from the web, and augmented open source dataset,
+   ensuring diversity in visual style, structure, and seman-     Reasoner framework and significantly enhanced the recog-
+   tics.                                                         nition capabilities of vanilla vision LLMs. The availability
+                                                                 of more datasets is likely to spur a rapid proliferation of
+ · We develop the first LLM-based autonomous multi-agent         LLM-based methods, fully leveraging the potential of large
+   system to generate table images with user-configurable        language models in handling tabular data.
+   properties, enabling synthesis of large-scale realistic
+   dataset and serving as a fundamental support for TSR.            TSR Datasets. Progress in Table Structure Recognition
+                                                                 (TSR) has been largely driven by the release of bench-
+ · We employ a diversity-based active learning strategy          mark datasets. The ICDAR series (Go¨bel et al. 2013; Gao
+   to train the table structure recognition part of our sys-     et al. 2017, 2019; Kayal et al. 2021) provides image-based
+   tem. Training on actively selected samples, our model         datasets covering table detection, structure recognition, and
+   achieves a competitive performance with much less train-      end-to-end extraction, with table images ranging from PDFs
+   ing samples on its test set and a higher performance than     to handwritten documents.
+   models trained on other public datasets on web-crawled
+   unseen real-world tables.                                        IBM Research has contributed several influential datasets.
+                                                                 PubTabNet (Zhong, ShafieiBavani, and Jimeno Yepes 2020)
+                    Related Works                                focuses on TSR by converting table regions in PMCOA
+                                                                 PDFs into HTML using the PubLayNet pipeline (Zhong,
+Table Structure Recognition (TSR). Tables are system-            Tang, and Yepes 2019). FinTabNet (Zheng et al. 2021)
+atic arrangements of data organized into rows and columns,       addresses the limitation of PubTabNet, which only sup-
+and their grid format provides clarity and efficiency. TSR       ports TSR and lacks full-page context and overall table re-
+aims to analyze the layout of table images and rebuild their     gion bounding boxes. Furthermore, SynthTabNet (Nassar
+cellular structure through representations such as markup        et al. 2022) further synthesizes PubTabNet, FinTabNet, and
+languages (Zhong, ShafieiBavani, and Jimeno Yepes 2020;          TableBank (Li et al. 2020b) to overcome domain limitations
+Nassar et al. 2022), spreadsheets (Koci et al. 2017), and        and structural simplicity.
+graphs (Koci et al. 2019, 2018; Qasim, Mahmood, and
+Shafait 2019; Xue, Li, and Tao 2019; Chi et al. 2019;               TableBank(Li et al. 2020b) is another large-scale TSR
+Liu et al. 2024). Over the years, TSR approaches have            dataset. It is created using weak supervision by automat-
+evolved rapidly, progressed through three phases: (1) early      ically extracting tables from Word and LaTeX documents
+approaches utilizing rule-based and heuristic methods, (2)       collected from the internet. This method leverages the struc-
+deep learning-based methods, and (3) LLM-based methods.          tural information already embedded in these formats, allow-
+                                                                 ing the dataset to be built at scale without extensive manual
+   Early approaches from the 1990s to 2010s relied heav-         labeling. As a result, TableBank supports better generaliza-
+ily on visual cues such as cell boundaries and align-            tion in TSR models, making them more effective in handling
+ments. Pyreddy et al. (Pyreddy and Croft 1997) intro-            diverse and real-world table layouts.
+duced the Character Alignment Graph using blank-space
+patterns, while Rus et al. (Rus and Subramanian 1997) pro-          As shown in Table 1, existing datasets still suffer from
+posed a similar White Space Density Graph. Several other         limited collection pipelines, domain constraints, and insuf-
+rule-based or heuristic methods followed (Itonori 1993;          ficient diversity. Models trained on one dataset often gen-
+Kieninger and Dengel 1999; Shigarov, Mikhailov, and Al-          eralize poorly to others due to the diverse visual nature of
+taev 2016). However, these techniques consistently strug-        tables (Li et al. 2020a; Somvanshi et al. 2024). For exam-
+gled with complex table layouts, highlighting the need for       ple, a model trained on monochrome tables may perform
+more general solutions.                                          poorly when applied to colored tables. Classic datasets such
+                                                                 as UNLV (Cesarini et al. 2002) and Marmot (Fang et al.
+   In the deep learning era, neural methods have dramati-        2012), along with recent ones like PubTables-1M (Yang
+cally surpassed early TSR approaches (Hashmi et al. 2021).       et al. 2023) and TabRecSet (Smock, Pesala, and Abraham
+Object detection­based methods (Zheng et al. 2021; Long          2022), either lack the diversity (Zheng et al. 2021; Zhong,
+et al. 2021; Schreiber et al. 2017; Raja, Mondal, and Jawahar    ShafieiBavani, and Jimeno Yepes 2020; Nassar et al. 2022;
+2020; Ajayi et al. 2024; Anand et al. 2023; Gorishniy et al.     Li et al. 2020b; Cesarini et al. 2002; Fang et al. 2012; Yang
+2021) identify structural components such as rows, columns,      et al. 2023) or omit explicit table-type labels. (Long et al.
+and captions. Markup-language models (Zhong, ShafieiBa-          2021; Smock, Pesala, and Abraham 2022). To address these
+vani, and Jimeno Yepes 2020; Nassar et al. 2022) treat TSR       limitations, we released TableNet, a large-scale synthesized
+as image-to-markup translation using NLP-inspired archi-         TSR dataset, together with the first autonomous table gener-
+tectures. Graph-based approaches (Koci et al. 2019, 2018;        ation multi-agent system to potentially facilitate TSR.
+Qasim, Mahmood, and Shafait 2019; Xue, Li, and Tao 2019;
+Chi et al. 2019; Liu et al. 2024) represent tables as graphs to     Text-only LLM Image Synthesis. Recent works have
+model cell-level relationships.                                  explored leveraging text-only LLMs to synthetic images
+                                                                 for VLMs because of the lack of vision-language data
+   Recently, LLMs demonstrated exceptional ability in natu-      (Cascante-Bonilla et al. 2022; Johnson-Roberson et al.
+ral language related tasks. But LLM for TSR still remains an     2016) and this approach has been applied to the genera-
+underexplored area and most work lies in table understand-       tion of QA pairs of charts, plots. (Kahou et al. 2017; Kafle
+ing field (Zheng et al. 2024; Li et al. 2023; Zha et al. 2023;   et al. 2018) used small set of chart and fixed QA templates
+Su et al. 2024; Pang et al. 2024; Sui et al. 2024). Zhou et      to generate chart VQA data. (Carbune et al. 2024; Li and
+al. (Zhou et al. 2024) proposed Neighbor-Guided Toolchain        Tajbakhsh 2023) used text-only LLMs to generate annota-
+Table 1: Comparison of TSR datasets. For TableBank and SynthTabNet, we randomly sampled 1,000 images to assess color
+diversity and found that fewer than 10 were colored, indicating weak diversity. For TabRecSet and WTW, their diversity came
+from being captured by cameras in real world. Annotation legend: T: table bounding box (supports table detection); S: struc-
+tural annotation (e.g., HTML tags, spanning); C: cell-level annotation (bounding box and content); H/X: final HTML/XML
+output or re-constructable from S and C; V: visual labels (e.g., simplicity, color, border style) provided in our dataset. Defini-
+tion of diversity: A table image dataset is deemed as diverse if it supports at least two distinct and meaningful classification
+standards by which its images can be systematically categorized. These standards may include structural, visual attributes,
+allowing for multifaceted analysis and evaluation. For example, one classification standard could be based on structural com-
+plexity, such as whether a table contains spanning cells; another could be based on visual style, including attributes like border
+presence, background color, or watermark interference. A dataset that enables classification along both dimensions provides
+more comprehensive coverage for training and evaluating table structure recognition models.
+
+Datasets         Diversity  Annotation                          Domain          Collection methodology      Tables
+
+TableNet (Ours)  True       S, C, H, V                          Telecom         See Figure 2                445K
+                                                                (configurable)
+PubTabNet        False      S, C, H                             Medicine        rule-based collection       510K
+FinTabNet        False      T, S, C, H                          Finance         augmentation                113K
+TableBank        True       T, H                                General         rule-based collection       145K
+SynthTabNet      True       T, S, C, H                          General         augmentation                600K
+ICDAR 2019       False      T, X                                General         institutional contribution  3K
+PubTables-1m     False      T, S, C, H                          Medicine        rule-based collection       948K
+TabRecSet        True       T, S, C, H                          General         manual labelling            38K
+WTW              True       S, C                                General         manual labelling            14K
+SciTSR           False      T, C                                General         rule-based collection       15K
+
+tions of questions or descriptions. Recent approaches like      Workflow and Core Concept Embodiment
+(Han et al. 2023; He et al. 2024; Xia et al. 2024; Yang et al.
+2025) generate charts or multiple kinds of image data, but      LLMs Our table generation system comprises three stage-
+they rely on LLMs to generate HTML code, making the             specific agents coordinated by a core LLM. The core LLM
+overall procedure uncontrollable and more likely to generate    interprets user requests--such as style, quantity, and do-
+error code. In our work, we designed a multi-agent system       main--and orchestrates the workflow. A topic generation
+that explicitly decomposes the table generation into schema     LLM produces table topics aligned with the specified or
+planning, layout construction and content filling, ensuring     default telecommunication domain, ensuring semantic rel-
+controllable table image synthesis and TSR annotating.          evance. A header-infilling LLM and a body-infilling LLM
+                                                                then complete the HTML skeleton by inserting contents into
+     Multi-Agent Table Generation System                        the <th> and <td> tags. Our system is developed based
+                                                                on an open source codebase1.
+LLMs demonstrate competitive performance in various
+tasks(Jian, Yang, and Jiao 2024; Jian et al. 2025), but pas-    Planning The core LLM functions as a high-level plan-
+sively predicting does not outperforms heuristic or simple      ner that decomposes the task into structured subtasks with
+agent tools on specific tasks like HTML structure genera-       clear dependencies. Upon receiving a request, the Schema
+tion. LLM-based multi-agent system is application that com-     Agent determines table size and layout attributes, including
+bine multiple LLMs with capabilities such as tool usage,        row/column counts and spanning relations, and condition-
+planning, and memory. The LLM acts as the "brain" of the        ally invokes a CSS generator for visual styling. It then gener-
+system interacting with users and execute key tasks. Plan-      ates a domain-relevant topic and constructs an initial HTML
+ning helps decompose the request into manageable subtasks,      skeleton. Header and body infilling models are invoked se-
+which the system solves individually. Additionally, a reflec-   quentially after prerequisites are satisfied. Finally, the Fill-
+tion mechanism is integrated to refine execution. Tool usage    ing Agent compares the filled and unfilled HTML to assess
+enables the system to interact with the external and gather     structural integrity and selectively regenerates the HTML if
+the necessary information to fulfill the user's request. Since  errors are detected. This multi-step, feedback-driven work-
+the workflow of our system is clearly illustrated in Figure 1,  flow ensures robust and controllable table synthesis.
+therefore in this section, we describe how these capabilities
+are integrated into our table generation multi-agent, enabling  Tool Using To support multi-step execution, the system in-
+configurable, domain-flexible, and semantically grounded        tegrates several tool modules: (1) a CSS style generator; (2)
+table synthesis.                                                an HTML tags generator specifying size and spanning; (3)
+                                                                a structure validator that builds a matrix representation and
+
+                                                                    1https://github.com/WenmuZhou/TableGeneration/tree/main
+                                                                under MIT License.
+Figure 1: Workflow of our multi-agent system.
+
+checks row equality; (4) a fallback HTML constructor for       tic consistency are LLM-ranked. We verified that this filling
+regenerating compliant tables; and (5) a Selenium tool for     checker can substitute for a well-trained human ranker.
+rendering table images and producing annotations.
+                                                                  After generation, we further use the data to finetune a TSR
+Memory The system incorporates a two-level memory              model under an active learning paradigm. This human-in-
+mechanism. Outer memory retains the multi-turn dialog his-     the-loop stage can be invoked at any time, since the data
+tory between the core LLM and the user, ensuring continuity    pool includes both labeled generated tables and unlabeled
+and refinement. Inner memory tracks previously generated       real-world tables, which are more valuable for TSR perfor-
+table topics to avoid redundancy and promote semantic di-      mance. We first apply a sampling strategy to select infor-
+versity. Together, these memories enhance interaction qual-    mative samples, then pass them to human experts for high-
+ity and generation diversity.                                  quality labeling and subsequent training.
+
+   Within the Filling Agent, we adopt a contrastive learn-           Dataset Collection and Composition
+ing­inspired augmentation strategy (Le-Khac, Healy, and
+Smeaton 2020) to enhance the diversity and robustness of       Our dataset is constructed from three distinct sources:
+TableNet. We define four transformations--copy, delete,        (1) agent-generated tables, (2) crawled tables from
+swap, and alter--applied at row/column or block levels.        telecommunication-related PDF documents, and (3) crawled
+Copy inserts duplicates; delete removes elements only when     tables from Word documents, along with augmented open-
+structural validity is preserved; swap exchanges rows/-        source HTML table data. These three sources represent
+columns or blocks; alter adjusts row-level background col-     agent generation, manual labeling, and rule-based genera-
+ors. For each HTML structure, the body-infilling LLM gen-      tion, respectively. The detailed dataset composition is avail-
+erates multiple content variants (five without transformation  able in Section .The pipelines and the final annotation for-
+and four with transformations), each assigned one operation.   mat are illustrated in Figure 2. We also present examples of
+Row and column spanning regions are detected to prevent        tables in Figure 4.
+invalid modifications. This augmentation increases diversity
+and helps models learn fine-grained structural distinctions.      Agent-generating pipeline. We employed an 8-way par-
+                                                               allel generation strategy, where each process corresponds
+   To validate generated tables, we designed a mixed strat-    to a unique combination of three binary attributes (simple,
+egy filling checker to rank structure correctness, topic rel-  colored, lined). In six days, we generated about 75K Chi-
+evance, and semantic consistency. Structural correctness is    nese and 34K English tables, now expanded to 445K. To
+evaluated using a heuristic method that checks validity (Fig-  enhance realism, we target structural, semantic, and visual
+ure 3) and HTML tag misuse; topic relevance and seman-         fidelity. Structurally, we summarize eight types of complex
+Figure 2: Data collection pipeline. From top to bottom: agent generating, web crawling and open source augmenting. Anno-
+tation explanation: is simple denotes whether the table contains cells spanning. is colored denotes whether the table includes
+any background color, colored borders, or non-black font colors. is lined specifies whether the cell borders are fully present;
+tables with only horizontal or vertical lines are considered not lined.
+
+                      Figure 3: Invalid tables               availability, limited controllability, and restricted variability
+                                                             in domain, structure, and visual style.
+span-free tables based on orientation, multi-level headers,
+and body-level spans, all supported by our system. Semanti-                       Experiments
+cally, we capture scenario-dependent complexity (e.g., tech
+comparisons vs. financial reports), and our filling checker  Diversity and Filling Checker Analysis
+improves authenticity by detecting header­body mismatches
+and hallucinations. Visually, we regulate border thickness,  Industry diversity groundness. To validate the capability
+line style, font and background colors via CSS heuristics,   of our multi-agent system to generate tables of multiple do-
+and incorporate secondary factors such as resolution varia-  mains, we selected 16 industries of 8 sectors from Global
+tion and watermarking noise.                                 Industry Classification Standard (GICS) and calculated their
+                                                             Spearman and Pearson correlation and Kendall's tau be-
+   PDF and Word crawling & labeling pipeline. Given          tween our filling checker and well-trained human rankers.
+that China Telecom, China Mobile, China Unicom, and          Besides, we repeated the procedure three times and calcu-
+China Broadnet dominate the Chinese telecommunication        lated the standard deviation to ensure the stability of the re-
+industry, we used Selenium to construct queries combin-      sults. According to (Zhang et al. 2019), our filling checker is
+ing their names with telecom-related keywords (e.g., FTTH,   capable of substituting well-trained human rankers and thus
+data plan;), restricting results to PDFs or Word files. For  proves the semantic consistency and the multiple domain ta-
+PDFs, due to the lack of reliable automatic extraction       ble generation ability. The detailed results are available as
+tools, we manually cropped and annotated 2.7K tables using   supplementary materials.
+PPOCRLabel over 30 days. For Word documents, we lever-
+aged their zipped-XML structure to extract table markup,        Across most sectors, the correlation metrics remain con-
+convert it to HTML, apply CSS via our generator, render      sistently high (mostly excels 0.8). Besides, we also evaluated
+images, and obtain annotations, yielding 600 tables despite  average iterations for our system to correct a table and corre-
+the limited availability of Word files.                      sponding metrics after disturbing on structure, topic, and se-
+                                                             mantics in Table 2. These indicate 1) strong semantic align-
+   Open-source dataset augmentation pipeline. Since ta-      ment within each language group and 2) filling checker is
+ble understanding models typically take structured formats   capable of ranking in replace of well-trained human rankers
+(e.g., HTML/Markdown) as input, we treated these struc-      (Zhang et al. 2019). This experiment provides a fine-grained
+tured inputs as outputs and rendered images and annotations  view of the semantic cohesion within industrial table data
+using the same process as in the Word pipeline. Based on     and offers empirical grounding for further bilingual align-
+TABMWP (Lu et al. 2022), we generated 1K augmented ta-       ment or domain-adaptive table generation research.
+bles. However, augmentation alone is constrained by data
+                                                                Style diversity groundness. By observeing our crawled
+                                                             real-world scenario tables, we described some key factor
+                                                             that determines the general veracity of a table. A distribu-
+                                                             tion of configurable styles of TableNet is shown in Figure 5.
+                                                             As described in Section , our system is capable of generating
+                                                             multiple kinds of tables. For detailed table diversity, we eval-
+                                                             uated detailed distribution of line style, structure complexity
+                                                             of our TableNet. Figure shown in supplementary materials
+(a) complex colored lined vertical (b) complex zebra lineless matrix (c) simple colored lined vertical (d) simple zebra lined horizontal
+
+table                table                                      table   table
+
+                                        Figure 4: examples in TableNet
+
+                                                                Table 3: TSR performance on unseen real-world data of
+                                                                models trained on different existing datasets.
+
+       Figure 5: Generated data composition                                  dataset    TEDS
+
+Table 2: Correlation between human and filling checker                  TableNet(Ours)  0.7403
+ranks. Struct. and Sem. represent structure and semantics.                PubTabNet     0.5041
+                                                                           FinTabNet    0.4495
+                                                                         SynthTabNet    0.5242
+                                                                          TableBank     0.5401
+
+Complexity  Dim.     Avg Iters  Spear.  Pear.   Ken.            color vs. colorless layouts, and lined vs. lineless designs.
+Simple                                                          This confirms that table diversity poses substantial gener-
+Complex     Struct.  1.03       0.8203  0.8111  0.7928          alization challenges and highlights the value of control-
+            Topic    1.07       0.8004  0.8085  0.6990          lable generation and detailed annotations.Structural com-
+            Sem.     1.03       0.9253  0.8914  0.8522          plexity--particularly row/column spans--remains the most
+            Struct.  1.11       0.8826  0.8751  0.8832          difficult factor, as it requires precise spatial and hierarchi-
+            Topic    1.08       0.7352  0.7408  0.6457          cal reasoning. Our fine-tuned Qwen2-VL-2B(FT) markedly
+            Sem.     1.17       0.8753  0.8411  0.8019          narrows this gap and outperforms larger models on com-
+                                                                plex structures. Color variations also influence performance:
+indicates our TableNet covers most of given classifications     while colored tables introduce richer context but higher
+where existing TSR datasets fail to achieve due to the limi-    variability, Qwen2-VL-2B(FT) remains robust (0.874 vs.
+tations caused by collection methodology.                       0.892), whereas zero-/few-shot large LLMs fluctuate more.
+                                                                Line presence further tests models' ability to infer im-
+Experiment with LLMs                                            plicit structure; again, our model maintains consistent ac-
+                                                                curacy.Overall, even state-of-the-art LLMs struggle without
+We used TEDS (tree edit distance-based simlarity)(Nassar        targeted supervision, underscoring the necessity of struc-
+et al. 2022) as metric. To evaluate the effectiveness of        turally grounded training for TSR.
+our TableNet, we conducted a fine-tuning experiment using
+Qwen2-VL-2B on our TableNet Chinese train split, which             To further explained the effectiveness compared to other
+contains about 48K tables. The full-parameter training pro-     existing datasets, we used the crawled real-world tables as
+cess was conducted using 2 NVIDIA 4090 RTX GPUs with            test set, and fine-tuned Qwen2-VL-2B on existing datasets
+a batch size of 1 and a learning rate of 1e-4. The model was    using the same number of samples and identical train-
+trained for 2 epochs, and the entire training process took ap-  ing settings, and separately fine-tuned it on TableNet with
+proximately 8 hours. Training, testing split and correspond-    crawled data excluded. We then evaluated models on un-
+ing subset for our training process will also be available.     seen real-world tables spanning diverse structural, semantic,
+For baselines, we selected large-scale multimodal LLMs as       and visual styles. The model trained on TableNet achieved
+baselines: Qwen2-VL-72B(Wang et al. 2024), GPT(Achiam           a TEDS of 0.7403, substantially outperforming the other-
+et al. 2023), Claude(Anthropic 2024) and Grok(xAI 2024)         trained model, demonstrating the superior real-world gen-
+series. To avoid possible negative impact caused by inaccu-     eralizability brought by TableNet. The results are shown in
+rate prompt design, we applied 1-shot and 5-shot in-context     Table 3.
+learning to Qwen2-VL-72B by integrating some training
+samples.                                                        Ablation Study
+
+   Table 4 summarizes the results. Models trained on            LLM-driven data generation often suffers from structural
+TableNet show strong and stable performance across di-          instability, prompting us to evaluate LLMs' end-to-end ta-
+verse table styles, whereas all baselines exhibit clear per-    ble synthesis capability using structure-only TEDS (Zhong,
+formance gaps between simple vs. complex structures,            ShafieiBavani, and Jimeno Yepes 2020). For simple tables,
+                                 Table 4: TEDS of HTML on TableNet and subsets.
+
+                                           is simple                          is colored        is lined
+                                                                        Colored Colorless  Lined Lineless
+Models                           All       Simple Complex
+
+Qwen2-VL-2B(FT)                  0.877                           Qwen
+Qwen2-VL-72B                     0.721
+Qwen2-VL-72B(1-shot)             0.696     0.860                 0.912  0.874  0.892       0.891  0.861
+Qwen2-VL-72B(5-shot)             0.688     0.822                 0.604  0.726  0.713       0.711  0.729
+                                           0.834                 0.587  0.706  0.685       0.699  0.695
+GPT-4.5-preview                  0.614     0.791                 0.576  0.695  0.682       0.689  0.687
+GPT-4o-all                       0.672
+                                                                 GPT
+Claude-sonnet-4                  0.620
+Claude-sonnet-4-thinking         0.706     0.872 0.494                  0.732  0.501       0.591 0.634
+Claude-opus-4                    0.691     0.794 0.487                  0.690  0.655       0.664 0.687
+
+Grok-4                           0.697               Claude
+
+                                           0.904                 0.517  0.687  0.533       0.621 0.618
+                                           0.917                 0.561  0.693  0.719       0.749 0.648
+                                           0.921                 0.523  0.704  0.675       0.722 0.661
+
+                                                                 Grok
+
+                                           0.892 0.538                  0.731 0.642        0.678 0.707
+
+Table 5: Table Fidelity using Structure-only TEDS of HTML
+generated by LLM through directly prompting. Small texts
+after ones means TEDS structure infidelity introduced by
+LLM infilling, which is lowest.
+
+             Simple              Complex
+
+Methods      with without        with without
+
+Qwen2.5      0.954     0.978     0.782     0.835                        Figure 6: Compared with existing CoSyn pipeline, which is
+DeepSeek-R1  0.938     0.974     0.940     0.901                        an LLM end-to-end method. In the middle subfigure, H rep-
+GPT-4o       0.980     0.978     0.931     0.928                        resents horizontally lined and V represents vertically lined.
+Agent Tool   1 -0.004  1 -0.003  1 -0.012  1 -0.009
+                                                                        structural score of 4.31 (out of 5) under our checker. In con-
+we instructed the LLM to produce HTML with specified                    trast, our agent-based pipeline reached 4.79 on average and
+row/column counts; for complex tables, we supplied ex-                  produced structurally correct tables with only 1.11 fallback
+plicit row- and column-span matrices that are difficult to              iterations per sample.
+express in natural language. As shown in Table 5, LLMs
+frequently fail to reproduce accurate structures--even in               Experiment on Active Learning TSR
+simple cases--while rule-based HTML generation reliably
+yields correct layouts and avoids structural infidelity through         The active learning procedure is detailed in the following.
+controlled prompting. These results demonstrate that, com-              We use an multi-agent system to generate new data instances
+pared with directly generating tables via LLMs, an agent that           and corresponding labels, not just selecting from the unla-
+invokes LLMs only at appropriate stages provides signifi-               beled set U. The LLM serves as a powerful tool throughout
+cantly more stable and accurate structure synthesis.                    the AL loop, starting by annotating an initial dataset (Linit) to
+                                                                        address the cold-start problem. In the Query step, we selects
+   To assess whether agent-based design improves dataset                informative instances from U . These instances are then an-
+quality, we evaluated the recent CoSyn pipeline for table-              notated in the Annotation step, either automatically or man-
+image and QA generation (Yang et al. 2025). Using it to                 ually. The newly labeled data is added to the labeled set L,
+generate 1,000 tables, only 85 contained complex struc-                 and the target model f is updated. The process iterates until
+tures such as merged rows/columns; most followed a simple               the given annotation budget is met. This method overcomes
+stacked <tr><td> format. We also evaluate the color and                 challenges in traditional AL by using LLMs for data gen-
+line style diversity, results are shown in Figure 6.                    eration and automatic agent tools for annotation, reducing
+                                                                        reliance on human annotators.
+   After strengthening its HTML prompt to enforce struc-
+tural complexity, the enhanced baseline achieved an average
+Algorithm 1: Active Learning                                                   Figure 7: TSR Experiment results
+
+ 1: Input: Unlabeled dataset U, Model M , Budget k              samples of the same performance. For example, model fine-
+ 2: Output: Trained model f, Labeled dataset L                  tuned on 10k actively selected samples achieved a TEDS
+ 3: Linit, U  Initialize                                        performance around 0.973 while other baselines used more
+ 4: f  Train(Linit)                                             than 20k, even 40k training samples.
+ 5: while not Stop(k, f, M ) do
+ 6: x  Query(f, U , M )                                                               Limitations
+ 7: (x, y)  Annotate(x, M )
+ 8: if x  U then U  U \ {x}                                     Although our system supports configurable parameters, it is
+ 9: L  L  {(x, y)}                                              still bounded by the pretraining distribution and reasoning
+10: f  Train(L)                                                 capabilities of the underlying LLM. As a result, the diver-
+11: end while                                                   sity of generated content may not fully capture edge cases
+12: return f, L                                                 or highly domain-specific table formats. Furthermore, the
+                                                                quality of generated table images may vary due to model's
+Algorithm 2: k-Center-Greedy                                    knowledge of user specified domain and language, leading
+                                                                to irrelevant table contents or inconsistencies within seman-
+ 1: Input: Data points {xi}ni=1, initial set s0, budget b       tic contents.
+ 2: Output: s
+ 3: s  s0                                                                             Conclusion
+ 4: repeat
+ 5: u  arg max min (xi, xj)                                     In this work, we introduce TableNet, a new dataset for TSR
+                                                                mainly sourced from autonomous generation. Complement-
+                           i[n]\s js                            ing the dataset, we develop the first autonomous table gen-
+                                                                eration and recognition multi-agent system that facilitates
+ 6: s  s  {u}                                                   TSR and supports controllable table synthesis and automatic
+ 7: until |s| = b + |s0|                                        annotation through user-defined parameters. It enables scal-
+ 8: return s \ s0                                               able, flexible, and research-oriented data construction, and
+                                                                demonstrates high efficiency with the capacity to generate
+   Based on Qwen2-VL-2B(FT) (hereafter the base model),         large volumes of structurally reliable tables. The scalabil-
+we conducted an active-learning fine-tuning study using a       ity of our collection process, together with empirical results,
+diversity-based strategy because TableNet exhibits diversity    highlights the significance of both TableNet and the system
+in row/column counts, merged-cell locations, colors, etc.       as TSR tools for TSR. We believe that integrating a power-
+Training used 2 × NVIDIA RTX 4090 GPUs with LoRA                ful generation agent with TableNet will meaningfully push
+fine-tuning for 1 epoch; TEDS served as the evaluation          TSR.
+metric. We adopted CoreSet (Sener and Savarese 2017),
+a greedy k-center shown in Algorithm 2 where we try to                                 References
+choose b centers such that the largest distance between a data
+point and its nearest center is minimized, formally trying to   Achiam, J.; Adler, S.; Agarwal, S.; Ahmad, L.; Akkaya, I.; Aleman,
+solve shown below, where s0 denotes the unlabeled dataset,      F. L.; Almeida, D.; Altenschmidt, J.; Altman, S.; Anadkat, S.; et al.
+b is the annotation budget, and s1 represents the set of sam-   2023. Gpt-4 technical report. arXiv preprint arXiv:2303.08774.
+ples selected for annotation.
+                                                                Ajayi, K.; Zhang, L.; He, Y.; and Wu, J. 2024. Uncertainty Quan-
+min max min (xi, xj).                                      (1)  tification in Table Structure Recognition. In 2024 IEEE Interna-
+s1 : |s1|=b i js1s0                                             tional Conference on Information Reuse and Integration for Data
+                                                                Science (IRI), 1­6. IEEE.
+We use it as a querying strategy shown in Algorithm 1,
+                                                                Anand, A.; Jaiswal, R.; Bhuyan, P.; Gupta, M.; Bangar, S.; Imam,
+and compared it to random sampling (RSB), hard-example          M. M.; Shah, R. R.; and Satoh, S. 2023. Tc-ocr: Tablecraft ocr
+
+mining (HE) (Liu et al. 2025; Shrivastava, Gupta, and
+
+Girshick 2016), and perplexity-based uncertainty sampling
+
+(PPL). We extracted the patched vision embeddings e 
+Rpatch×dim from the vision tower of base model and con-
+
+catenated its max- and mean-pooled embedding into a vector
+c  R2×dim to perform the method.
+
+   As shown in Figure 7, diversity-based CoreSet method
+
+demonstrates stably higher performance that baselines,
+
+including random sampling, perplexity-based uncertainty
+
+sampling, and hard examples mining. Besides, We can also
+
+observe that active learning method achieved a comparable
+
+performance compared to baselines while reducing the num-
+ber of sample by at least 50% in both low-data regime and
+
+standard-data regime by comparing the number of training
+for efficient detection & recognition of table structure & content.     Jian, C.; Yang, K.; and Jiao, Y. 2024. Tri-Level Navigator: LLM-
+In Proceedings of the 1st International Workshop on Deep Multi-         Empowered Tri-Level Learning for Time Series OOD Generaliza-
+modal Learning for Information Retrieval, 11­18.                        tion. Advances in Neural Information Processing Systems, 37:
+                                                                        110613­110642.
+Anthropic. 2024. Claude 3 Model Family System Card.
+                                                                        Jian, C.; Yang, K.; Ouyang, Y.; and Ye, X. 2025. Stable Prefer-
+Beluch, W. H.; Genewein, T.; Nu¨rnberger, A.; and Ko¨hler, J. M.        ence Optimization for LLMs: A Bilevel Approach Beyond Direct
+2018. The power of ensembles for active learning in image classi-       Preference Optimization. arXiv preprint arXiv:2507.07723.
+fication. In Proceedings of the IEEE conference on computer vision
+and pattern recognition, 9368­9377.                                     Johnson-Roberson, M.; Barto, C.; Mehta, R.; Sridhar, S. N.;
+                                                                        Rosaen, K.; and Vasudevan, R. 2016. Driving in the matrix: Can
+Carbune, V.; Mansoor, H.; Liu, F.; Aralikatte, R.; Baechler,            virtual worlds replace human-generated annotations for real world
+G.; Chen, J.; and Sharma, A. 2024. Chart-based reasoning:               tasks? arXiv preprint arXiv:1610.01983.
+Transferring capabilities from llms to vlms. arXiv preprint
+arXiv:2403.12596.                                                       Kafle, K.; Price, B.; Cohen, S.; and Kanan, C. 2018. Dvqa: Un-
+                                                                        derstanding data visualizations via question answering. In Pro-
+Cascante-Bonilla, P.; Wu, H.; Wang, L.; Feris, R. S.; and Ordonez,      ceedings of the IEEE conference on computer vision and pattern
+V. 2022. Simvqa: Exploring simulated environments for visual            recognition, 5648­5656.
+question answering. In Proceedings of the IEEE/CVF conference           Kahou, S. E.; Michalski, V.; Atkinson, A.; Ka´da´r, A´ .; Trischler, A.;
+on computer vision and pattern recognition, 5056­5066.                  and Bengio, Y. 2017. Figureqa: An annotated figure dataset for
+                                                                        visual reasoning. arXiv preprint arXiv:1710.07300.
+Cesarini, F.; Marinai, S.; Sarti, L.; and Soda, G. 2002. Trainable ta-
+ble location in document images. In 2002 International Conference       Kayal, P.; Anand, M.; Desai, H.; and Singh, M. 2021. ICDAR 2021
+on Pattern Recognition, volume 3, 236­240. IEEE.                        competition on scientific table image recognition to LaTeX. In
+                                                                        Document Analysis and Recognition­ICDAR 2021: 16th Interna-
+Chi, Z.; Huang, H.; Xu, H.-D.; Yu, H.; Yin, W.; and Mao, X.-L.          tional Conference, Lausanne, Switzerland, September 5­10, 2021,
+2019. Complicated table structure recognition. arXiv preprint           Proceedings, Part IV 16, 754­766. Springer.
+arXiv:1908.04729.
+                                                                        Kieninger, T.; and Dengel, A. 1999. The t-recs table recognition
+Fang, J.; Tao, X.; Tang, Z.; Qiu, R.; and Liu, Y. 2012. Dataset,        and analysis system. In Document Analysis Systems: Theory and
+ground-truth and performance metrics for table detection evalu-         Practice: Third IAPR Workshop, DAS'98 Nagano, Japan, Novem-
+ation. In 2012 10th IAPR International Workshop on Document             ber 4­6, 1998 Selected Papers 3, 255­270. Springer.
+Analysis Systems, 445­449. IEEE.
+                                                                        Koci, E.; Thiele, M.; Lehner, W.; and Romero, O. 2018. Table
+Gal, Y.; Islam, R.; and Ghahramani, Z. 2017. Deep bayesian active       recognition in spreadsheets via a graph representation. In 2018
+learning with image data. In International conference on machine        13th IAPR International Workshop on Document Analysis Systems
+learning, 1183­1192. PMLR.                                              (DAS), 139­144. IEEE.
+
+Gao, L.; Huang, Y.; De´jean, H.; Meunier, J.-L.; Yan, Q.; Fang, Y.;     Koci, E.; Thiele, M.; Romero, O.; and Lehner, W. 2017. Table iden-
+Kleber, F.; and Lang, E. 2019. ICDAR 2019 competition on table          tification and reconstruction in spreadsheets. In Advanced Informa-
+detection and recognition (cTDaR). In 2019 International confer-        tion Systems Engineering: 29th International Conference, CAiSE
+ence on document analysis and recognition (ICDAR), 1510­1515.           2017, Essen, Germany, June 12-16, 2017, Proceedings 29, 527­
+IEEE.                                                                   541. Springer.
+
+Gao, L.; Yi, X.; Jiang, Z.; Hao, L.; and Tang, Z. 2017. ICDAR2017       Koci, E.; Thiele, M.; Romero, O.; and Lehner, W. 2019. A genetic-
+competition on page object detection. In 2017 14th IAPR Inter-          based search for adaptive table recognition in spreadsheets. In 2019
+national Conference on Document Analysis and Recognition (IC-           International Conference on Document Analysis and Recognition
+DAR), volume 1, 1417­1422. IEEE.                                        (ICDAR), 1274­1279. IEEE.
+
+Gissin, D.; and Shalev-Shwartz, S. 2019. Discriminative active          Le-Khac, P. H.; Healy, G.; and Smeaton, A. F. 2020. Contrastive
+learning. arXiv preprint arXiv:1907.06347.                              representation learning: A framework and review. Ieee Access, 8:
+                                                                        193907­193934.
+Go¨bel, M.; Hassan, T.; Oro, E.; and Orsi, G. 2013. ICDAR 2013
+table competition. In 2013 12th international conference on docu-       Li, K.; Wigington, C.; Tensmeyer, C.; Zhao, H.; Barmpalios, N.;
+ment analysis and recognition, 1449­1453. IEEE.                         Morariu, V. I.; Manjunatha, V.; Sun, T.; and Fu, Y. 2020a. Cross-
+                                                                        domain document object detection: Benchmark suite and method.
+Gorishniy, Y.; Rubachev, I.; Khrulkov, V.; and Babenko, A. 2021.        In Proceedings of the IEEE/CVF conference on computer vision
+Revisiting deep learning models for tabular data. Advances in neu-      and pattern recognition, 12915­12924.
+ral information processing systems, 34: 18932­18943.
+                                                                        Li, M.; Cui, L.; Huang, S.; Wei, F.; Zhou, M.; and Li, Z. 2020b.
+Han, Y.; Zhang, C.; Chen, X.; Yang, X.; Wang, Z.; Yu, G.; Fu,           Tablebank: Table benchmark for image-based table detection and
+B.; and Zhang, H. 2023. Chartllama: A multimodal llm for chart          recognition. In Proceedings of the Twelfth Language Resources
+understanding and generation. arXiv preprint arXiv:2311.16483.          and Evaluation Conference, 1918­1925.
+
+Hashmi, K. A.; Liwicki, M.; Stricker, D.; Afzal, M. A.; Afzal,          Li, P.; He, Y.; Yashar, D.; Cui, W.; Ge, S.; Zhang, H.; Fainman,
+M. A.; and Afzal, M. Z. 2021. Current status and performance            D. R.; Zhang, D.; and Chaudhuri, S. 2023. Table-gpt: Table-tuned
+analysis of table recognition in document images with deep neural       gpt for diverse table tasks. arXiv preprint arXiv:2310.09263.
+networks. IEEE Access, 9: 87663­87685.
+                                                                        Li, S.; and Tajbakhsh, N. 2023. Scigraphqa: A large-scale synthetic
+He, W.; Xi, Z.; Zhao, W.; Fan, X.; Ding, Y.; Shan, Z.; Gui, T.;         multi-turn question-answering dataset for scientific graphs. arXiv
+Zhang, Q.; and Huang, X. 2024. Distill Visual Chart Reasoning           preprint arXiv:2308.03349.
+Ability from LLMs to MLLMs. arXiv preprint arXiv:2410.18798.
+                                                                        Liu, H.; Li, X.; Gong, M.; Liu, B.; Wu, Y.; Jiang, D.; Liu, Y.;
+Itonori, K. 1993. Table structure recognition based on textblock        and Sun, X. 2024. Grab what you need: Rethinking complex ta-
+arrangement and ruled line position. In Proceedings of 2nd Inter-       ble structure recognition with flexible components deliberation. In
+national Conference on Document Analysis and Recognition (IC-
+DAR'93), 765­768. IEEE.
+Proceedings of the AAAI Conference on Artificial Intelligence, vol-  Sui, Y.; Zhou, M.; Zhou, M.; Han, S.; and Zhang, D. 2024. Table
+ume 38, 3603­3611.                                                   meets llm: Can large language models understand structured table
+                                                                     data? a benchmark and empirical study. In Proceedings of the 17th
+Liu, L.; Liang, Y.; Yan, X.; Huangfu, L.; Samtani, S.; Yu, Z.;       ACM International Conference on Web Search and Data Mining,
+Zhang, Y.; and Zeng, D. D. 2025. Hard Sample Mining: A New           645­654.
+Paradigm of Efficient and Robust Model Training. IEEE Transac-
+tions on Neural Networks and Learning Systems.                       Wang, P.; Bai, S.; Tan, S.; Wang, S.; Fan, Z.; Bai, J.; Chen, K.; Liu,
+                                                                     X.; Wang, J.; Ge, W.; et al. 2024. Qwen2-vl: Enhancing vision-
+Long, R.; Wang, W.; Xue, N.; Gao, F.; Yang, Z.; Wang, Y.; and Xia,   language model's perception of the world at any resolution. arXiv
+G.-S. 2021. Parsing table structures in the wild. In Proceedings of  preprint arXiv:2409.12191.
+the IEEE/CVF International Conference on Computer Vision, 944­
+952.                                                                 xAI. 2024. Grok-1 Model Card.
+
+Lu, P.; Qiu, L.; Chang, K.-W.; Wu, Y. N.; Zhu, S.-C.; Rajpurohit,    Xia, R.; Zhang, B.; Ye, H.; Yan, X.; Liu, Q.; Zhou, H.; Chen, Z.;
+T.; Clark, P.; and Kalyan, A. 2022. Dynamic prompt learning via      Ye, P.; Dou, M.; Shi, B.; et al. 2024. Chartx & chartvlm: A versatile
+policy gradient for semi-structured mathematical reasoning. arXiv    benchmark and foundation model for complicated chart reasoning.
+preprint arXiv:2209.14610.                                           arXiv preprint arXiv:2402.12185.
+
+Nassar, A.; Livathinos, N.; Lysak, M.; and Staar, P. 2022. Table-    Xia, Y.; Mukherjee, S.; Xie, Z.; Wu, J.; Li, X.; Aponte, R.; Lyu, H.;
+former: Table structure understanding with transformers. In Pro-     Barrow, J.; Chen, H.; Dernoncourt, F.; et al. 2025. From selection to
+ceedings of the IEEE/CVF Conference on Computer Vision and           generation: A survey of llm-based active learning. In Proceedings
+Pattern Recognition, 4614­4623.                                      of the 63rd Annual Meeting of the Association for Computational
+                                                                     Linguistics (Volume 1: Long Papers), 14552­14569.
+Pang, C.; Cao, Y.; Yang, C.; and Luo, P. 2024. Uncovering limita-
+tions of large language models in information seeking from tables.   Xue, W.; Li, Q.; and Tao, D. 2019. Res2tim: Reconstruct syntactic
+arXiv preprint arXiv:2406.04113.                                     structures from table images. In 2019 international conference on
+                                                                     document analysis and recognition (ICDAR), 749­755. IEEE.
+Pyreddy, P.; and Croft, W. B. 1997. Tintin: A system for retrieval
+in text tables. In Proceedings of the second ACM international       Yang, F.; Hu, L.; Liu, X.; Huang, S.; and Gu, Z. 2023. A large-
+conference on Digital libraries, 193­200.                            scale dataset for end-to-end table recognition in the wild. Scientific
+                                                                     Data, 10(1): 110.
+Qasim, S. R.; Mahmood, H.; and Shafait, F. 2019. Rethinking table
+recognition using graph neural networks. In 2019 International       Yang, K.; Ren, J.; Zhu, Y.; and Zhang, W. 2018. Active learning for
+Conference on Document Analysis and Recognition (ICDAR), 142­        wireless IoT intrusion detection. IEEE Wireless Communications,
+147. IEEE.                                                           25(6): 19­25.
+
+Raja, S.; Mondal, A.; and Jawahar, C. 2020. Table structure recog-   Yang, Y.; Patel, A.; Deitke, M.; Gupta, T.; Weihs, L.; Head, A.;
+nition using top-down and bottom-up cues. In Computer Vision­        Yatskar, M.; Callison-Burch, C.; Krishna, R.; Kembhavi, A.; and
+ECCV 2020: 16th European Conference, Glasgow, UK, August 23­         Clark, C. 2025. Scaling Text-Rich Image Understanding via
+28, 2020, Proceedings, Part XXVIII 16, 70­86. Springer.              Code-Guided Synthetic Multimodal Data Generation. In Che, W.;
+                                                                     Nabende, J.; Shutova, E.; and Pilehvar, M. T., eds., Proceedings of
+Rus, D.; and Subramanian, D. 1997. Customizing information cap-      the 63rd Annual Meeting of the Association for Computational Lin-
+ture and access. ACM Transactions on Information Systems (TOIS),     guistics (Volume 1: Long Papers), 17486­17505. Vienna, Austria:
+15(1): 67­101.                                                       Association for Computational Linguistics. ISBN 979-8-89176-
+                                                                     251-0.
+Schreiber, S.; Agne, S.; Wolf, I.; Dengel, A.; and Ahmed, S. 2017.
+Deepdesrt: Deep learning for detection and structure recognition of  Yoo, D.; and Kweon, I. S. 2019. Learning loss for active learning.
+tables in document images. In 2017 14th IAPR international con-      In Proceedings of the IEEE/CVF conference on computer vision
+ference on document analysis and recognition (ICDAR), volume 1,      and pattern recognition, 93­102.
+1162­1167. IEEE.
+                                                                     Zha, L.; Zhou, J.; Li, L.; Wang, R.; Huang, Q.; Yang, S.; Yuan,
+Sener, O.; and Savarese, S. 2017. Active learning for convo-         J.; Su, C.; Li, X.; Su, A.; et al. 2023. Tablegpt: Towards unifying
+lutional neural networks: A core-set approach. arXiv preprint        tables, nature language and commands into one gpt. arXiv preprint
+arXiv:1708.00489.                                                    arXiv:2307.08674.
+
+Shigarov, A.; Mikhailov, A.; and Altaev, A. 2016. Configurable       Zhang, T.; Kishore, V.; Wu, F.; Weinberger, K. Q.; and Artzi, Y.
+table structure recognition in untagged pdf documents. In Pro-       2019. Bertscore: Evaluating text generation with bert. arXiv
+ceedings of the 2016 ACM symposium on document engineering,          preprint arXiv:1904.09675.
+119­122.
+                                                                     Zheng, M.; Feng, X.; Si, Q.; She, Q.; Lin, Z.; Jiang, W.; and
+Shrivastava, A.; Gupta, A.; and Girshick, R. 2016. Training region-  Wang, W. 2024. Multimodal table understanding. arXiv preprint
+based object detectors with online hard example mining. In Pro-      arXiv:2406.08100.
+ceedings of the IEEE conference on computer vision and pattern
+recognition, 761­769.                                                Zheng, X.; Burdick, D.; Popa, L.; Zhong, X.; and Wang, N. X. R.
+                                                                     2021. Global table extractor (gte): A framework for joint table
+Smock, B.; Pesala, R.; and Abraham, R. 2022. PubTables-1M:           identification and cell structure recognition using visual context. In
+Towards comprehensive table extraction from unstructured docu-       Proceedings of the IEEE/CVF winter conference on applications of
+ments. In Proceedings of the IEEE/CVF Conference on Computer         computer vision, 697­706.
+Vision and Pattern Recognition, 4634­4642.
+                                                                     Zhong, X.; ShafieiBavani, E.; and Jimeno Yepes, A. 2020. Image-
+Somvanshi, S.; Das, S.; Javed, S. A.; Antariksa, G.; and Hos-        based table recognition: data, model, and evaluation. In European
+sain, A. 2024. A survey on deep tabular learning. arXiv preprint     conference on computer vision, 564­580. Springer.
+arXiv:2410.12034.
+                                                                     Zhong, X.; Tang, J.; and Yepes, A. J. 2019. Publaynet: largest
+Su, A.; Wang, A.; Ye, C.; Zhou, C.; Zhang, G.; Chen, G.; Zhu,        dataset ever for document layout analysis. In 2019 International
+G.; Wang, H.; Xu, H.; Chen, H.; et al. 2024. Tablegpt2: A large      conference on document analysis and recognition (ICDAR), 1015­
+multimodal model with tabular data integration. arXiv preprint       1022. IEEE.
+arXiv:2411.02059.
+Zhou, Y.; Cheng, M.; Mao, Q.; Liu, Q.; Xu, F.; Li, X.; and Chen, E.               Document Crawling Keywords
+2024. Enhancing Table Recognition with Vision LLMs: A Bench-
+mark and Neighbor-Guided Toolchain Reasoner. arXiv preprint             We crawled Microsoft search engine using Selenium by querying
+arXiv:2412.20662.                                                       in format:
+Zhu, Y.; and Yang, K. 2019. Tripartite active learning for interac-
+tive anomaly discovery. IEEE Access, 7: 63195­63203.                         company abbreviation + telecom-related
+                                                                                        keyword + filetype:pdf/doc
+       Supplementary Experiment Results
+                                                                           Keywords are shown in Table 7.
+Experiments on Multiple Industries
+                                                                                LLM HTML Generation Prompts
+To evaluate the semantic consistency of tables across different
+Global Industry Classification Standard (GICS) sectors and indus-       Structure-Only Generation Prompt
+tries, we conducted a comprehensive correlation analysis between
+Chinese and English tables. Specifically, we computed the average       Please generate an HTML table with {no of rows} rows and
+pairwise semantic correlation between corresponding tables in the       {no of cols} columns containing {content}. Only the <tr>,
+two languages under each industry category. The metrics include         <td>, </tr>, and </td> tags should be used in the sequence.
+Spearman's rank correlation (Spear.), Pearson correlation (Pear.),
+and Kendall's Tau (Ken.), each reported as mean ± half standard            Please return the generated table in the following JSON format:
+deviation to reflect statistical stability. Results are shown in Table  {"html": "HTML table string"}
+6
+                                                                           The table should include cells that span multiple rows or
+   Each industry is evaluated separately, with two rows per indus-      columns. Below are two matrices indicating the row spans and col-
+try: the first row corresponds to the semantic correlations for Chi-    umn spans: Row span matrix: {row spans matrix} Column span
+nese tables, and the second row to their English counterparts.          matrix: {col span matrix}
+
+Detailed Diversity Analysis                                             Topic Generation Prompt
+
+Based on the obeservation of crawled real-world tables, we divided      Please give me {copy} highly domain-relevant {lang} phrases re-
+tables into 5 types based on line type and 6 types based on table       lated to the field of {domain}. Each phrase should be as detailed
+headers. As shown in Figure 8, our system is capable of gener-          and specific as possible. Then return the generated phrases in the
+ating given types of tables. In Figure 8, fully lined means every       following JSON format: {"phrase": [phrase1, phrase2, phrase3,
+cell has complete borderlines, and horizontally/vertically lineless     phrase4, phrase5]} The following topics have already been used.
+mean cells miss their horizontal/vertical border lines. Lined Head-     Please do not repeat these topics or generate content that is highly
+ers means only header cells has borderlines. Matrix/verticle/hori-      similar to them: [Used topics]
+zontal tables means they have both/top headers/left headers.
+                                                                        HTML Header Fulfilling Prompt
+   However, existing datasets always fail to cover these types. For
+example, PubTabNet and FinTabNet is collected from scientific ar-       Below is an HTML table in the domain of {domain}, with the
+ticles and is mostly consisted of verticle single header tables that    topic: {topic}, and the table language is {lang}. The HTML se-
+only contain horizontal lines with black and white color. Table-        quence to be filled is as follows: {HTML CODE}
+Bank is mostly consisted of fully lined verticle single header tables
+which harms the ability of models to recognize lineless tables.            The structure of the HTML table is complete ­ the header sec-
+                                                                        tion (<th> tags) already contains the column names, while the
+           Figure 8: Detailed TableNet composition                      body section (<td> tags) is empty. Without making any changes
+                                                                        to the original HTML structure, attributes, or tags, please fill in the
+                                                                        content of the table body (<td> tags) based on the given topic and
+                                                                        existing headers. Ensure that each cell in the table contains distinct
+                                                                        and meaningful content.
+
+                                                                           Generate {copy} different versions of the filled HTML table.
+                                                                        Then return the results in the following JSON format: {"html":
+                                                                        [list of filled HTML tables]}
+
+                                                                        LLM Experiment and Few-Shot Prompt
+
+                                                                        Read the table content from the image and convert it into an HTML
+                                                                        table format. The HTML must start with <html><body><table>
+                                                                        and end with </table></body></html> and the entire HTML
+                                                                        should be output in a single line. Your output must contain only the
+                                                                        HTML that begins with <html><body><table> and ends with
+                                                                        </table></body></html> and nothing else.
+
+                                                                           Examples: HTML1 HTML2 ...
+
+                                                                        HTML Body Fulfilling Prompt
+
+                                                                        You will act as a strict HTML editor. You are tasked with process-
+                                                                        ing a table in the {domain} domain, with the topic: {topic}, and
+                                                                        the table language is {lang}. The HTML snippet to be completed
+                                                                        is as follows: {HTML CODE}
+
+                                                                           The above is the original HTML paragraph for the table header.
+                                                                        Without making any changes to the original HTML structure,
+                                                                        please fill in the missing column names inside each <th> tag.
+
+                                                                           Important rules:
+Table 6: Average semantic correlation adding or subtracting half standard deviation of multiple Global Industry Classifica-
+tion Standard (GICS) industries' tables. For each industry, the upper results line represents Chinese tables and the other line
+represents English tables.
+
+Sector         Industry                    Spear.          Pear.           Ken.
+Energy         Equipment & Service
+               Consumable Fuel             0.8021 ± 0.015  0.7954 ± 0.007  0.7311 ± 0.007
+Material       Chemicals                   0.8204 ± 0.016  0.8080 ± 0.015  0.7551 ± 0.010
+               Metals & Mining
+Health Care    Biotechnology               0.8344 ± 0.021  0.8047 ± 0.010  0.7612 ± 0.005
+               Pharmaceuticals             0.8121 ± 0.002  0.7853 ± 0.013  0.7224 ± 0.018
+Financials     Banks
+Information    Insurance                   0.8006 ± 0.017  0.8105 ± 0.015  0.7290 ± 0.022
+Technology     Communication Equipment     0.8788 ± 0.027  0.8446 ± 0.017  0.8054 ± 0.020
+Communication  Semiconductor Equipment
+Services       Telecommunications          0.8951 ± 0.027  0.8848 ± 0.028  0.8109 ± 0.019
+Utilities      Media                       0.9091 ± 0.006  0.9004 ± 0.005  0.7923 ± 0.016
+               Electric Utilities
+Real Estate    Gas Utilities               0.8516 ± 0.016  0.8476 ± 0.015  0.7577 ± 0.015
+               Equity Real Estate Trusts   0.8607 ± 0.016  0.8394 ± 0.017  0.7509 ± 0.004
+               Management and Development
+                                           0.8585 ± 0.007  0.8347 ± 0.010  0.7544 ± 0.008
+                                           0.8433 ± 0.015  0.8172 ± 0.011  0.7712 ± 0.017
+
+                                           0.8821 ± 0.018  0.8543 ± 0.019  0.7654 ± 0.009
+                                           0.9007 ± 0.020  0.8687 ± 0.022  0.8147 ± 0.027
+
+                                           0.7963 ± 0.014  0.7896 ± 0.009  0.7089 ± 0.002
+                                           0.8191 ± 0.011  0.8000 ± 0.004  0.6891 ± 0.008
+
+                                           0.8598 ± 0.016  0.8239 ± 0.011  0.7653 ± 0.016
+                                           0.8437 ± 0.022  0.8171 ± 0.011  0.7096 ± 0.001
+
+                                           0.8243 ± 0.015  0.8145 ± 0.015  0.7505 ± 0.010
+                                           0.8457 ± 0.012  0.8019 ± 0.016  0.7174 ± 0.004
+
+                                           0.8826 ± 0.006  0.8224 ± 0.007  0.7338 ± 0.004
+                                           0.8897 ± 0.009  0.8656 ± 0.010  0.7560 ± 0.005
+
+                                           0.8537 ± 0.010  0.8348 ± 0.010  0.7299 ± 0.004
+                                           0.8751 ± 0.011  0.8322 ± 0.010  0.7402 ± 0.008
+
+                                           0.8941 ± 0.009  0.8781 ± 0.06   0.7885 ± 0.002
+                                           0.8656 ± 0.013  0.8346 ± 0.015  0.7750 ± 0.006
+
+                                           0.8338 ± 0.012  0.7953 ± 0.011  0.7287 ± 0.006
+                                           0.8052 ± 0.013  0.7940 ± 0.012  0.6800 ± 0.008
+
+                                           0.8208 ± 0.015  0.7890 ± 0.015  0.6868 ± 0.006
+                                           0.8236 ± 0.014  0.8163 ± 0.005  0.7233 ± 0.003
+
+                                           0.8277 ± 0.021  0.8134 ± 0.015  0.7358 ± 0.015
+                                           0.8155 ± 0.013  0.8052 ± 0.013  0.6986 ± 0.002
+Table 7: Keywords
+
+Company Abbreviation                                                  China Telecom     China Mobile
+
+China Unicom                                                          optical fiber     telecommunications
+China Broadnet                                                        base station      backbone network
+                                                                      data center       FTTR
+Telecom-Related Keywords                                              roaming           value-added services
+                                                                      network access    voice services
+5G                                                                    cloud computing   local area network
+operator                                                              gateway services  ring back tone
+gigabit                                                               Wi-Fi             core network
+quality of service                                                    access network    network optimization
+service hall                                                          IPTV              5G plans
+broadband                                                             VoLTE             plan pricing
+Internet of Things
+network security
+network coverage
+customer relationship management
+data pricing
+
+   Do not add, delete, or adjust any tags, attributes, or structure;     Overall Score (rank):
+Only fill in the content of <th> tags ­ even if a <th> tag has        This should be the lowest score among the three dimensions above.
+colspan or rowspan attributes, you must still assign it an appropri-
+ate column name and must not leave it empty; The return format           Output Format should strictly be JSON format, no extra text.
+must be the following JSON structure:                                 Topic: {topic}
+                                                                      Raw HTML Table Code: {html code}
+HTML Ranking Prompt
+                                                                      Modified CoSyn Prompt
+You are an expert in table quality assessment, specializing in an-
+alyzing the structure, semantics, and topic relevance of HTML ta-     You are a content creation expert with broad domain knowledge.
+bles. Based on the input below, please evaluate the table's qual-     Please generate content material for me based on the following
+ity across multiple dimensions and provide specific reasons for the   setup:
+scores.
+                                                                         Topic: {TOPIC}
+   Dimensions (1 to 5, integers only):                                Figure Type: Table
+   Structure Correctness (structure rank): (The score must be
+strictly {score})                                                        Please follow the requirements below:
+This score is based only on structural indicators; cell content does
+not affect this score.                                                   The generated material should be closely related to the topic
+The table's logical column count per row is detailed as follows:      and tailored according to the persona. The content structure should
+{structure info prompt}.                                              be suitable for generating the specified figure type (e.g., tables,
+   Topic Relevance (topic rank):                                      charts, etc.).
+It is based only on the relevance between table content and the
+topic, ignoring expression or semantics.                                 All content must be factual and credible, using real-world
+Assess whether the content matches the topic "{topic}".               entity names. The use of placeholders (such as xxA, xxB, [Name],
+Ensure full coverage of the dimensions mentioned in the title (e.g.,  [Date], etc.) is strictly prohibited.
+time, location, metrics, technologies, organizations), no more, no
+less.                                                                    The material should be diverse and cover the topic from differ-
+Check whether the table reflects the following entity information:    ent perspectives to ensure informational richness and breadth.
+{entities prompt}. Inclusion of these entities--whether specific or
+general--is required. Irrelevant or completely unrelated content is      Control the amount of content and only provide key information
+prohibited. No fabricated or far-fetched justifications are allowed.  so that it fits on a single-page document.
+Do not rely solely on the literal presence of keywords; semantic
+alignment with the topic is sufficient.                                  All content must be written in English, even if the persona is
+   Semantic Consistency (semantic rank):                              non-English-speaking.
+Are there completely empty cells in the HTML? If so, suggest
+filling them with content consistent with the table headers.             Please output in JSON format, do not include any additional ex-
+Are the table headers and body semantically aligned?                  planatory text.
+{complex string2}
+Are the headers clear and detailed?                                      You are an expert in writing HTML documents.
+Are there garbled or corrupted characters?                            I have a dataset about {TOPIC} that can be used to generate an
+Deduct points based on the proportion of cells exhibiting the above   HTML table.
+issues. Do not assign extremely low scores for isolated problems.     The data is as follows (in JSON format):
+Content like "N/A", "-", or "TBD" is not considered empty.            <data>
+                                                                      {DATA}
+</data>                                                                              Reproducibility Checklist
+
+   Please use HTML and CSS to generate an HTML table. Follow            Instructions for Authors:
+the requirements below:                                                    This document outlines key aspects for assessing reproducibil-
+
+   Styling Requirements:                                                ity. Please provide your input by editing this .tex file directly.
+(1) You may use any CSS frameworks, libraries, or tools to build           For each question (that applies), replace the "Type your response
+the page.
+(2) Be creative and ensure the webpage is distinctive in terms of       here" text with your answer.
+typography, colors, borders, layout, etc., while aligning with the
+topic and target figure type.                                           Example: If a question appears as
+(3) Use appropriate design proportions (e.g., margins, page size,
+content density, etc.) to ensure the information is clearly presented,      \question{Proofs of all novel claims are
+with no overlapping text or layout issues.                                  included} {(yes/partial/no)}
+(4) All content must be displayed within a single page--do not              Type your response here
+make the page too long or too sparse. This is a very important          you would change it to:
+requirement.
+(6) All text must be inside the table.                                      \question{Proofs of all novel claims are
+[(7) Generated Table should contain rowspan or colspan                      included} {(yes/partial/no)}
+attribute.]                                                                 yes
+                                                                        Please make sure to:
+   Code Requirements:
+(1) Please hardcode the provided data directly into the HTML               · Replace ONLY the "Type your response here" text and noth-
+page. Do not use any backend calls. Ensure correct HTML syntax                ing else.
+and formatting.
+(2) Include both HTML and CSS in a single HTML file. Do not                · Use one of the options listed for that question (e.g., yes, no,
+use any external resource files.                                              partial, or NA).
+
+   Output Requirements:                                                    · Not modify any other part of the \question command or
+Please mark the code block.                                                   any other lines in this document.
+Do not output any additional explanatory text--the output should
+be a single HTML file wrapped in <html></html>.                            You can \input this .tex file right before \end{document}
+                                                                        of your main file or compile it as a stand-alone document. Check
+                                                                        the instructions on your conference's website to see if you will be
+                                                                        asked to provide this checklist with your paper or separately.
+
+                                                                        1. General Paper Structure
+                                                                        1.1. Includes a conceptual outline and/or pseudocode description
+
+                                                                              of AI methods introduced (yes/partial/no/NA) yes
+
+                                                                        1.2. Clearly delineates statements that are opinions, hypothesis,
+                                                                              and speculation from objective facts and results (yes/no) yes
+
+                                                                        1.3. Provides well-marked pedagogical references for less-
+                                                                              familiar readers to gain background necessary to replicate the
+                                                                              paper (yes/no) yes
+
+                                                                        2. Theoretical Contributions
+                                                                        2.1. Does this paper make theoretical contributions? (yes/no) no
+                                                                         If yes, please address the following points:
+
+                                                                           2.2. All assumptions and restrictions are stated clearly and for-
+                                                                                  mally (yes/partial/no) Type your response here
+
+                                                                           2.3. All novel claims are stated formally (e.g., in theorem state-
+                                                                                  ments) (yes/partial/no) Type your response here
+
+                                                                           2.4. Proofs of all novel claims are included (yes/partial/no)
+                                                                                  Type your response here
+
+                                                                           2.5. Proof sketches or intuitions are given for complex and/or
+                                                                                  novel results (yes/partial/no) Type your response here
+
+                                                                           2.6. Appropriate citations to theoretical tools used are given
+                                                                                  (yes/partial/no) Type your response here
+   2.7. All theoretical claims are demonstrated empirically to hold              tem; names and versions of relevant software libraries and
+          (yes/partial/no/NA) Type your response here                            frameworks (yes/partial/no) partial
+
+   2.8. All experimental code used to eliminate or disprove claims         4.9. This paper formally describes evaluation metrics used and
+          is included (yes/no/NA) Type your response here                        explains the motivation for choosing these metrics (yes/-
+                                                                                 partial/no) yes
+3. Dataset Usage
+                                                                          4.10. This paper states the number of algorithm runs used to
+3.1. Does this paper rely on one or more datasets? (yes/no) yes                  compute each reported result (yes/no) yes
+
+ If yes, please address the following points:                             4.11. Analysis of experiments goes beyond single-dimensional
+                                                                                 summaries of performance (e.g., average; median) to in-
+   3.2. A motivation is given for why the experiments are con-                   clude measures of variation, confidence, or other distribu-
+          ducted on the selected datasets (yes/partial/no/NA) yes                tional information (yes/no) yes
+
+   3.3. All novel datasets introduced in this paper are included in       4.12. The significance of any improvement or decrease in per-
+          a data appendix (yes/partial/no/NA) yes                                formance is judged using appropriate statistical tests (e.g.,
+                                                                                 Wilcoxon signed-rank) (yes/partial/no) yes
+   3.4. All novel datasets introduced in this paper will be made
+          publicly available upon publication of the paper with a li-     4.13. This paper lists all final (hyper-)parameters used for
+          cense that allows free usage for research purposes (yes/-              each model/algorithm in the paper's experiments (yes/par-
+          partial/no/NA) yes                                                     tial/no/NA) yes
+
+   3.5. All datasets drawn from the existing literature (potentially
+          including authors' own previously published work) are ac-
+          companied by appropriate citations (yes/no/NA) yes
+
+   3.6. All datasets drawn from the existing literature (potentially
+          including authors' own previously published work) are
+          publicly available (yes/partial/no/NA) yes
+
+   3.7. All datasets that are not publicly available are described in
+          detail, with explanation why publicly available alternatives
+          are not scientifically satisficing (yes/partial/no/NA) NA
+
+4. Computational Experiments
+
+4.1. Does this paper include computational experiments? (yes/no)
+      yes
+
+ If yes, please address the following points:
+
+   4.2. This paper states the number and range of values tried per
+          (hyper-) parameter during development of the paper, along
+          with the criterion used for selecting the final parameter set-
+          ting (yes/partial/no/NA) no
+
+   4.3. Any code required for pre-processing data is included in
+          the appendix (yes/partial/no) yes
+
+   4.4. All source code required for conducting and analyzing the
+          experiments is included in a code appendix (yes/partial/no)
+          yes
+
+   4.5. All source code required for conducting and analyzing the
+          experiments will be made publicly available upon publica-
+          tion of the paper with a license that allows free usage for
+          research purposes (yes/partial/no) yes
+
+   4.6. All source code implementing new methods have com-
+          ments detailing the implementation, with references to the
+          paper where each step comes from (yes/partial/no) yes
+
+   4.7. If an algorithm depends on randomness, then the method
+          used for setting seeds is described in a way sufficient to
+          allow replication of results (yes/partial/no/NA) NA
+
+   4.8. This paper specifies the computing infrastructure used for
+          running experiments (hardware and software), including
+          GPU/CPU models; amount of memory; operating sys-
+
