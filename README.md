@@ -43,7 +43,7 @@
 └─ README.md
 ```
 
-## 环境准备
+## 环境准备（Windows）
 
 建议使用 Python 3.10+。
 
@@ -56,29 +56,29 @@ pip install -r requirements.txt
 
 ### 2. 准备浏览器和驱动
 
-如果你要运行 Selenium 渲染，还需要准备浏览器和驱动：
+如果你要运行 Selenium 渲染，需要准备：
 
-- Chrome + chromedriver，或
-- Firefox + geckodriver
+- Chrome 浏览器
+- 与 Chrome 版本匹配的 ChromeDriver
 
 当前代码已经预留了常见路径的自动查找逻辑，但驱动文件**不会提交到仓库**，需要你本地自行准备。
 
 #### Chrome 推荐方式
 
-1. 安装 Chrome 浏览器。
-2. 下载与你本机 Chrome 主版本匹配的 `chromedriver.exe`。
-3. 将驱动放到下面任意一个位置：
-   - `TableGeneration/chromedriver-win64/chromedriver.exe`
+1. 安装 Chrome 浏览器。官方下载安装页：
+   - https://www.google.com/chrome/
+2. 下载与你本机 Chrome 主版本匹配的 ChromeDriver。官方页面：
+   - https://developer.chrome.com/docs/chromedriver/downloads/
+   - Chrome for Testing 下载列表：https://googlechromelabs.github.io/chrome-for-testing/
+3. 在下载页里选择 `win64` 对应的 `chromedriver-win64.zip`，解压后得到 `chromedriver.exe`。
+4. 将驱动放到下面任意一个位置：
+   - `chromedriver-win64/chromedriver.exe`（仓库根目录下）
    - 或者放到系统 `PATH` 里
-4. 如果你不想依赖默认路径，也可以在运行命令时显式传入：
+5. 如果你不想依赖默认路径，也可以在运行命令时显式传入：
 
 ```bash
-python agents/run_agents.py --chrome_driver_path path/to/chromedriver.exe
+python agents/run_agents.py --chrome_driver_path ..\chromedriver-win64\chromedriver.exe
 ```
-
-#### Firefox 方式
-
-如果你更习惯 Firefox，也可以安装 `geckodriver` 并加入 `PATH`，然后把 `--brower firefox` 传给脚本。
 
 ### 3. 配置 LLM 环境变量
 
