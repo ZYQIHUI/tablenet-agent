@@ -9,6 +9,11 @@ class BodyAgent:
     REGIONS = ["东区", "西区", "南区", "北区", "中心区", "新区"]
     STATUS = ["正常", "待优化", "已完成", "跟进中", "需复核"]
     PEOPLE = ["张工", "李工", "王工", "赵工", "陈工"]
+    DEPARTMENTS = ["网络部", "市场部", "客服中心", "装维中心", "政企部", "运维部"]
+    SUGGESTIONS = ["扩容小区", "优化参数", "安排复测", "跟进回访", "升级设备", "保持观察"]
+    ORDER_TYPES = ["网络慢", "频繁掉线", "计费疑问", "装维延迟", "信号弱", "服务咨询"]
+    PACKAGES = ["畅享套餐", "融合套餐", "校园套餐", "政企套餐", "家庭套餐", "流量包"]
+    TIME_WINDOWS = ["早高峰", "午间", "晚高峰", "夜间", "节假日", "工作日"]
 
     def __init__(self, llm_body_client=None, use_llm=False):
         self.llm_body_client = llm_body_client
@@ -26,15 +31,29 @@ class BodyAgent:
             if cell.role != "body":
                 continue
             header = headers.get(cell.col, "")
-            if any(keyword in header for keyword in ("区域", "部门", "项目", "用户类型", "客户类型", "群体")):
+            if any(keyword in header for keyword in ("区域", "所属区域", "装机区域")):
                 cell.text = random.choice(self.REGIONS)
+            elif any(keyword in header for keyword in ("投诉类型",)):
+                cell.text = random.choice(self.ORDER_TYPES)
+            elif any(keyword in header for keyword in ("套餐名称",)):
+                cell.text = random.choice(self.PACKAGES)
+            elif any(keyword in header for keyword in ("监控时段", "时段")):
+                cell.text = random.choice(self.TIME_WINDOWS)
+            elif any(keyword in header for keyword in ("责任部门", "部门")):
+                cell.text = random.choice(self.DEPARTMENTS)
             elif any(keyword in header for keyword in ("率", "同比", "进度", "占比", "满意度", "评分", "覆盖率")):
                 cell.text = "{:.1f}%".format(random.uniform(70, 99.9))
-            elif any(keyword in header for keyword in ("站点数", "用户数", "故障数", "数量", "预算", "支出", "收入", "利润", "流量", "时长", "速度", "次数", "频次", "投诉", "延迟", "覆盖", "活跃")):
+            elif any(keyword in header for keyword in ("日期",)):
+                cell.text = f"2026-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
+            elif any(keyword in header for keyword in ("编号",)):
+                cell.text = f"BS-{random.randint(1000, 9999)}"
+            elif any(keyword in header for keyword in ("建议", "意见", "备注")):
+                cell.text = random.choice(self.SUGGESTIONS)
+            elif any(keyword in header for keyword in ("站点数", "用户数", "故障数", "数量", "预算", "支出", "收入", "利润", "流量", "时长", "速度", "次数", "频次", "投诉", "延迟", "覆盖", "活跃", "告警", "受理", "完结", "响应", "订购", "新增", "退订", "带宽", "拥塞", "预约", "完成", "超时", "修复", "ARPU")):
                 cell.text = str(random.randint(10, 999))
-            elif any(keyword in header for keyword in ("负责人",)):
+            elif any(keyword in header for keyword in ("负责人", "维护人员", "装维人员")):
                 cell.text = random.choice(self.PEOPLE)
-            elif any(keyword in header for keyword in ("状态", "备注", "类型", "时段", "偏好", "设备")):
+            elif any(keyword in header for keyword in ("状态", "类型", "偏好", "设备")):
                 cell.text = random.choice(self.STATUS)
             else:
                 cell.text = self._fallback_value(cell.col)
@@ -101,7 +120,7 @@ class BodyAgent:
     def _expected_type(self, header: str) -> str:
         if any(keyword in header for keyword in ("率", "同比", "进度", "占比", "满意度", "评分", "覆盖率")):
             return "percent"
-        if any(keyword in header for keyword in ("站点数", "用户数", "故障数", "数量", "预算", "支出", "收入", "利润", "流量", "时长", "速度", "次数", "频次", "投诉", "延迟", "覆盖", "活跃", "容量")):
+        if any(keyword in header for keyword in ("站点数", "用户数", "故障数", "数量", "预算", "支出", "收入", "利润", "流量", "时长", "速度", "次数", "频次", "投诉", "延迟", "覆盖", "活跃", "容量", "告警", "受理", "完结", "响应", "订购", "新增", "退订", "带宽", "拥塞", "预约", "完成", "超时", "修复", "ARPU")):
             return "numeric"
         return "text"
 

@@ -27,9 +27,8 @@ TableRequest
 - colored / plain 样式控制。
 - lined / unlined 样式控制。
 - 8 路 balanced config 轮询生成。
-- 可选 OpenAI-compatible LLM 入口。
-- 结构验证和填充质量评分。
-- 失败重试和批量报告。
+- 默认启用 OpenAI-compatible LLM 语义入口，并保留规则 fallback。
+- 结构验证、填充质量评分、局部重试和批量报告。
 - PP-Structure 风格 `gt.txt`。
 - 样本级 `meta.jsonl`。
 - cell-level `cells.jsonl`。
@@ -93,6 +92,7 @@ simple      是否简单表格，None 表示随机
 colored     是否带颜色，None 表示随机
 lined       是否完整线框，None 表示随机
 config_id   8 路配置 ID 或 manual
+structure_type  指定 complex 结构类型，None 表示由 SchemaAgent 决定
 ```
 
 ### TablePlan
@@ -111,6 +111,8 @@ simple
 colored
 lined
 config_id
+semantic_scenario
+structure_type
 ```
 
 ### Cell
@@ -154,6 +156,9 @@ grouped_columns
 left_headers
 body_rowspan
 mixed_headers
+two_axis_header
+summary_row_colspan
+multi_level_column_header
 ```
 
 ### TableStyle
@@ -167,7 +172,10 @@ name
 table_css
 cell_css
 header_css
+visual
 ```
+
+`visual` 是结构化视觉属性，目前记录 `font_family / font_size / padding_mode / align / background_mode / border_weight` 等字段。
 
 ### AgentTable
 
@@ -192,14 +200,20 @@ id_count
 
 ```text
 1. TopicAgent.plan(request)
-2. SchemaAgent.build(plan)
-3. StyleAgent.build(plan)
-4. HeaderAgent.fill(schema, plan)
-5. BodyAgent.fill(schema, plan)
-6. ValidatorAgent.validate(schema)
-7. FillingChecker.evaluate(schema, plan)
-8. HtmlBuilder.build(plan, schema, style)
+2. StyleAgent.build(plan)
+3. SchemaAgent.build(plan)
+4. ValidatorAgent.validate(base_schema)
+5. HeaderAgent.fill(schema, plan)
+6. BodyAgent.fill(schema, plan)
+7. ValidatorAgent.validate(filled_schema)
+8. FillingChecker.evaluate(schema, plan)
+9. HtmlBuilder.build(plan, schema, style)
 ```
+
+`CoreAgent` 现在有两层重试：
+
+- `max_schema_retries`：结构验证失败，或 FillingChecker 判断标题 / 表头基础质量为 0 时，重新构建 schema。
+- `max_filling_retries`：结构可用但填充质量低时，保留同一基础 schema，重新填充 header/body。
 
 如果结构验证失败，会抛出：
 
@@ -231,7 +245,8 @@ sub_agents/planners/topic_agent.py
 - 随机或按请求确定行列数。
 - 随机或按请求确定 simple / colored / lined。
 - 传递 `config_id`。
-- 可选调用 LLM 生成主题。
+- 为规则 fallback 选择 `semantic_scenario`，驱动 topic / header / body 模板。
+- 默认可调用 LLM 生成主题；缺少配置或调用失败时回退规则主题。
 - 用 `used_topics` 做简单主题去重。
 
 规则主题库目前覆盖：
@@ -274,9 +289,12 @@ grouped_columns    分组列头
 left_headers       左侧行表头
 body_rowspan       表体第一列跨行
 mixed_headers      标题 + 分组列头 + 左侧表头
+multi_level_column_header  多级列头
+two_axis_header    双轴表头，左侧两列为行表头
+summary_row_colspan 汇总行，左侧标签跨列
 ```
 
-注意：`_title_header()` 目前只在行列过小时作为 fallback，正常 complex 随机选择其他四类。
+注意：`_title_header()` 目前只在行列过小时作为 fallback；`multi_level_column_header` 需要至少 5 行，避免只有表头没有表体。
 
 ### StyleAgent
 
@@ -290,7 +308,9 @@ sub_agents/planners/style_agent.py
 
 - 根据 `plan.colored` 决定表头和表体背景。
 - 根据 `plan.lined` 决定线型。
+- 随机采样字体、字号、padding、对齐方式、背景模式和边框粗细。
 - 生成 `TableStyle.name`，用于文件名前缀和 metadata。
+- 生成 `TableStyle.visual`，用于 mini 版 V annotation。
 
 当前 line style 包括：
 
@@ -321,7 +341,7 @@ sub_agents/fillers/header_agent.py
 - 填充 column header。
 - 填充 grouped header。
 - 填充 row header。
-- 可选调用 LLM 生成 headers / group_headers / row_headers。
+- 默认可调用 LLM 生成 headers / group_headers / row_headers；缺少配置或调用失败时回退规则模板。
 
 默认领域模板包括：
 
@@ -343,7 +363,7 @@ sub_agents/fillers/body_agent.py
 
 - 根据列头语义填充 body。
 - 支持区域、数字、百分比、负责人、状态等字段。
-- 可选调用 LLM 生成表体。
+- 默认可调用 LLM 生成表体；缺少配置或调用失败时回退规则模板。
 - 对 LLM 返回值做轻量归一化。
 
 当前规则示例：
@@ -469,6 +489,7 @@ source
 domain
 language
 config_id
+semantic_scenario
 topic
 rows
 cols
@@ -477,6 +498,7 @@ colored
 lined
 style
 line_type
+visual
 header_type
 has_rowspan
 has_colspan
@@ -487,6 +509,8 @@ has_colspan
 ```text
 filename
 config_id
+semantic_scenario
+visual
 header_type
 rows
 cols
@@ -520,7 +544,7 @@ row_header
 body
 ```
 
-## 9. LLM Adapter
+## 9. LLM Adapter 与语义模式
 
 文件：
 
@@ -534,9 +558,17 @@ tools/adapters/llm_body_client.py
 
 - 提供 OpenAI-compatible API 调用。
 - 支持 api_key / base_url / model / system_prompt。
-- Topic / Header / Body 均可独立启用。
+- Topic / Header / Body 默认在 `semantic_mode=auto` 下启用。
 
-如果不启用 LLM，系统走规则 fallback。
+语义模式由 `run_agents.py` 的 `--semantic_mode` 控制：
+
+```text
+auto  默认值，尝试 LLM，缺配置或失败时自动回退规则
+llm   尝试 LLM，当前仍保留规则 fallback，避免批量生成中断
+rule  强制规则生成，不调用 LLM
+```
+
+旧参数 `--use_llm_topic / --use_llm_header / --use_llm_body` 仍保留兼容，但推荐使用 `--semantic_mode`。
 
 推荐在：
 
@@ -581,6 +613,7 @@ run_agents.py
 --colored / --no-colored
 --lined / --no-lined
 --balanced_configs
+--balanced_structures
 ```
 
 `--simple` 和 `--complex` 互斥。
@@ -592,6 +625,7 @@ run_agents.py
 --brower_width
 --brower_height
 --chrome_driver_path
+--semantic_mode
 ```
 
 注意：参数名沿用了原项目拼写 `brower`。
@@ -646,6 +680,24 @@ python agents/run_agents.py --target_num 80 --balanced_configs
 ```
 
 系统会按 8 路轮询生成，理想情况下每种配置 10 张。
+
+如果同时传入：
+
+```bash
+python agents/run_agents.py --target_num 56 --balanced_configs --balanced_structures
+```
+
+complex 样本会在以下结构类型中轮询：
+
+```text
+grouped_columns
+left_headers
+body_rowspan
+mixed_headers
+two_axis_header
+summary_row_colspan
+multi_level_column_header
+```
 
 ## 12. 失败重试与报告
 
@@ -732,10 +784,22 @@ python agents\run_agents.py --target_num 16 --balanced_configs --retry_failed --
 python agents\run_agents.py --target_num 8 --balanced_configs --retry_failed --report --output ..\output\smoke --chrome_driver_path ..\chromedriver-win64\chromedriver.exe
 ```
 
-启用 LLM：
+默认尝试 LLM，缺配置自动回退规则：
 
 ```powershell
-python agents\run_agents.py --target_num 8 --balanced_configs --use_llm_topic --use_llm_header --use_llm_body
+python agents\run_agents.py --target_num 8 --balanced_configs
+```
+
+强制规则生成：
+
+```powershell
+python agents\run_agents.py --target_num 8 --balanced_configs --semantic_mode rule
+```
+
+显式使用 LLM 语义模式：
+
+```powershell
+python agents\run_agents.py --target_num 8 --balanced_configs --semantic_mode llm
 ```
 
 ## 14. 测试
@@ -750,6 +814,8 @@ TableGeneration/tests/
 
 - balanced config 是否均匀轮询。
 - target_num / max_attempts 逻辑。
+- semantic_mode 默认 LLM 和规则强制关闭逻辑。
+- semantic_scenario 和场景化表头模板。
 - report 统计逻辑。
 - ValidatorAgent 结构验证。
 - cell-level annotation 字段。
@@ -764,7 +830,7 @@ python -m unittest discover -s tests -p "test_*.py"
 当前期望结果：
 
 ```text
-Ran 10 tests
+Ran 17 tests
 OK
 ```
 
@@ -778,7 +844,7 @@ OK
 | Topic LLM | TopicAgent + 可选 LLM | 基础完成 |
 | Header infilling LLM | HeaderAgent + 可选 LLM | 基础完成 |
 | Body infilling LLM | BodyAgent + 可选 LLM | 基础完成 |
-| CSS generator | StyleAgent | 基础完成 |
+| CSS generator | StyleAgent + structured visual metadata | 第一版完成 |
 | HTML tags generator | SchemaAgent + HtmlBuilder | 基础完成 |
 | Structure validator | ValidatorAgent matrix 检查 | 基础完成 |
 | Fallback constructor | retry loop 粗粒度重试 | 第一版完成 |
@@ -787,7 +853,7 @@ OK
 | S annotation | gt.txt / structure_tokens | 部分完成 |
 | C annotation | cells.jsonl | 第一版完成 |
 | H annotation | html + role 字段 | 第一版完成 |
-| V annotation | meta 中 simple/colored/lined/line_type | 部分完成 |
+| V annotation | meta/cells 中 simple/colored/lined/line_type/visual | 第一版完成 |
 | Filling checker ranking | FillingChecker 规则评分 | 基础完成 |
 | augmentation | 未实现 | 待做 |
 | structure fidelity experiment | 未实现 | 待做 |

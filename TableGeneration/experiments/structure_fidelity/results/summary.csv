@@ -1,0 +1,9 @@
+method,case,samples,exact_match,structure_valid,avg_structure_score,avg_error_count
+agent_tool,simple_with_content,7,7,7,1.0,0.0
+agent_tool,simple_without_content,7,7,7,1.0,0.0
+agent_tool,complex_with_content,7,7,7,1.0,0.0
+agent_tool,complex_without_content,7,7,7,1.0,0.0
+llm_direct,simple_with_content,7,7,7,1.0,0.0
+llm_direct,simple_without_content,7,7,7,1.0,0.0
+llm_direct,complex_with_content,7,0,0,0.8552,3.1429
+llm_direct,complex_without_content,7,3,3,0.9367,1.4286

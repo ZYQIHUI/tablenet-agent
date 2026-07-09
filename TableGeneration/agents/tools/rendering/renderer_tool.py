@@ -102,6 +102,8 @@ class RendererTool:
             "domain": table.plan.domain,
             "language": table.plan.language,
             "config_id": table.plan.config_id,
+            "semantic_scenario": table.plan.semantic_scenario,
+            "requested_structure_type": table.plan.structure_type,
             "topic": table.plan.topic,
             "rows": table.plan.rows,
             "cols": table.plan.cols,
@@ -110,6 +112,7 @@ class RendererTool:
             "lined": table.plan.lined,
             "style": table.style.name,
             "line_type": self._line_type(table.style.name),
+            "visual": table.style.visual,
             "header_type": table.schema.header_type,
             "has_rowspan": table.schema.has_rowspan,
             "has_colspan": table.schema.has_colspan,
@@ -129,7 +132,7 @@ class RendererTool:
                 "rowspan": cell.rowspan,
                 "colspan": cell.colspan,
                 "tag": cell.tag,
-                "role": RendererTool._role(cell),
+                "role": RendererTool._role(cell, table.schema.header_type),
                 "text": text,
                 "tokens": list(text),
                 "bbox": bbox,
@@ -139,7 +142,10 @@ class RendererTool:
         return {
             "filename": img_file_name,
             "config_id": table.plan.config_id,
+            "semantic_scenario": table.plan.semantic_scenario,
+            "requested_structure_type": table.plan.structure_type,
             "header_type": table.schema.header_type,
+            "visual": table.style.visual,
             "rows": table.schema.rows,
             "cols": table.schema.cols,
             "cell_count": len(cells),
@@ -147,10 +153,11 @@ class RendererTool:
         }
 
     @staticmethod
-    def _role(cell):
+    def _role(cell, header_type=None):
         if cell.role == "title":
             return "title"
-        if cell.role == "header" and cell.col == 0 and cell.row > 1:
+        row_header_cols = 2 if header_type == "two_axis_header" else 1
+        if cell.role == "header" and cell.col < row_header_cols and cell.row > 1:
             return "row_header"
         if cell.role == "header":
             return "column_header"

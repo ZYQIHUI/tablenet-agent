@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from agents.sub_agents.fillers.body_agent import BodyAgent
 from agents.sub_agents.fillers.header_agent import HeaderAgent
 from agents.sub_agents.planners.schema_agent import SchemaAgent
@@ -21,7 +23,9 @@ class CoreAgent:
             llm_body_client=None,
             use_llm_topic=False,
             use_llm_header=False,
-            use_llm_body=False):
+            use_llm_body=False,
+            max_schema_retries=3,
+            max_filling_retries=2):
         self.topic_agent = topic_agent or TopicAgent(
             llm_topic_client=llm_topic_client,
             use_llm=use_llm_topic,
@@ -39,25 +43,54 @@ class CoreAgent:
         self.validator_agent = ValidatorAgent()
         self.filling_checker = FillingChecker()
         self.html_builder = HtmlBuilder()
+        self.max_schema_retries = max_schema_retries
+        self.max_filling_retries = max_filling_retries
 
     def generate(self, request: TableRequest):
         plan = self.topic_agent.plan(request)
-        schema = self.schema_agent.build(plan)
         style = self.style_agent.build(plan)
-        schema = self.header_agent.fill(schema, plan)
-        schema = self.body_agent.fill(schema, plan)
-        ok, errors = self.validator_agent.validate(schema)
+        last_schema_errors = []
+        last_filling_report = None
 
-        if not ok:
-            raise ValueError("invalid table schema: " + "; ".join(errors))
-        filling_report = self.filling_checker.evaluate(schema, plan)
-        if not filling_report.ok:
-            raise ValueError(
-                "invalid table filling "
-                f"(score={filling_report.score:.3f}, "
-                f"title={filling_report.title_score:.3f}, "
-                f"header={filling_report.header_score:.3f}, "
-                f"body={filling_report.body_score:.3f}): "
-                + "; ".join(filling_report.errors)
-            )
-        return self.html_builder.build(plan, schema, style)
+        for _ in range(self.max_schema_retries):
+            base_schema = self.schema_agent.build(plan)
+            ok, errors = self.validator_agent.validate(base_schema)
+            if not ok:
+                last_schema_errors = errors
+                continue
+
+            for _ in range(self.max_filling_retries):
+                schema = deepcopy(base_schema)
+                schema = self.header_agent.fill(schema, plan)
+                schema = self.body_agent.fill(schema, plan)
+                ok, errors = self.validator_agent.validate(schema)
+                if not ok:
+                    last_schema_errors = errors
+                    break
+
+                filling_report = self.filling_checker.evaluate(schema, plan)
+                if filling_report.ok:
+                    return self.html_builder.build(plan, schema, style)
+
+                last_filling_report = filling_report
+                if self._needs_schema_retry(filling_report):
+                    break
+
+        if last_schema_errors and last_filling_report is None:
+            raise ValueError("invalid table schema: " + "; ".join(last_schema_errors))
+        if last_filling_report is not None:
+            raise ValueError(self._format_filling_error(last_filling_report))
+        raise ValueError("failed to generate a valid table")
+
+    def _needs_schema_retry(self, filling_report):
+        return filling_report.title_score <= 0.0 or filling_report.header_score <= 0.0
+
+    def _format_filling_error(self, filling_report):
+        return (
+            "invalid table filling "
+            f"(score={filling_report.score:.3f}, "
+            f"title={filling_report.title_score:.3f}, "
+            f"header={filling_report.header_score:.3f}, "
+            f"body={filling_report.body_score:.3f}): "
+            + "; ".join(filling_report.errors)
+        )

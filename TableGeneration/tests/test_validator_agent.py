@@ -57,6 +57,43 @@ class ValidatorAgentTest(unittest.TestCase):
         self.assertTrue(schema.has_colspan)
         self.assertEqual(schema.header_type, "grouped_columns")
 
+    def test_multi_level_column_header_table_passes(self):
+        plan = self.plan()
+        plan.rows = 7
+        plan.cols = 6
+        schema = self.schema_agent._multi_level_column_header(plan)
+        self.assert_valid(schema)
+        self.assertTrue(schema.has_rowspan)
+        self.assertTrue(schema.has_colspan)
+        self.assertEqual(schema.header_type, "multi_level_column_header")
+
+    def test_two_axis_header_table_passes(self):
+        plan = self.plan()
+        plan.rows = 6
+        plan.cols = 5
+        schema = self.schema_agent._two_axis_header(plan)
+        self.assert_valid(schema)
+        self.assertTrue(schema.has_colspan)
+        self.assertEqual(schema.header_type, "two_axis_header")
+
+    def test_summary_row_colspan_table_passes(self):
+        plan = self.plan()
+        plan.rows = 6
+        plan.cols = 5
+        schema = self.schema_agent._summary_row_colspan(plan)
+        self.assert_valid(schema)
+        self.assertTrue(schema.has_colspan)
+        self.assertEqual(schema.header_type, "summary_row_colspan")
+
+    def test_named_complex_pattern_passes(self):
+        plan = self.plan()
+        plan.rows = 7
+        plan.cols = 6
+        plan.structure_type = "two_axis_header"
+        schema = self.schema_agent.build(plan)
+        self.assert_valid(schema)
+        self.assertEqual(schema.header_type, "two_axis_header")
+
     def test_span_out_of_range_fails(self):
         schema = TableSchema(
             rows=2,

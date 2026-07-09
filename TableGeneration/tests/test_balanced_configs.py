@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agents.run_agents import BALANCED_CONFIGS, build_report, max_attempts, requests_for_args, target_num
+from agents.run_agents import BALANCED_CONFIGS, COMPLEX_STRUCTURE_TYPES, build_report, max_attempts, requests_for_args, target_num, use_llm
 
 
 class BalancedConfigsTest(unittest.TestCase):
@@ -17,6 +17,7 @@ class BalancedConfigsTest(unittest.TestCase):
             max_attempts=None,
             retry_failed=False,
             output="output/test",
+            semantic_mode="auto",
             domain="telecommunications",
             language="zh",
             min_row=4,
@@ -28,6 +29,7 @@ class BalancedConfigsTest(unittest.TestCase):
             colored=None,
             lined=None,
             balanced_configs=True,
+            balanced_structures=False,
         )
 
     def test_balanced_configs_repeat_evenly(self):
@@ -77,6 +79,34 @@ class BalancedConfigsTest(unittest.TestCase):
         self.assertEqual(report["config_counts"]["complex_plain_lined"], 1)
         self.assertEqual(report["span_counts"]["complex_total"], 1)
         self.assertEqual(report["span_counts"]["complex_has_rowspan"], 1)
+
+    def test_semantic_mode_defaults_to_llm_with_fallback(self):
+        args = self.args(num=1)
+        self.assertTrue(use_llm(args, "topic"))
+        self.assertTrue(use_llm(args, "header"))
+        self.assertTrue(use_llm(args, "body"))
+
+    def test_semantic_mode_rule_disables_llm(self):
+        args = self.args(num=1)
+        args.semantic_mode = "rule"
+        args.use_llm_topic = True
+        args.use_llm_header = True
+        args.use_llm_body = True
+        self.assertFalse(use_llm(args, "topic"))
+        self.assertFalse(use_llm(args, "header"))
+        self.assertFalse(use_llm(args, "body"))
+
+    def test_balanced_structures_assigns_only_complex_requests(self):
+        args = self.args(num=16)
+        args.balanced_structures = True
+        requests = requests_for_args(args)
+        complex_requests = [request for request in requests if request.simple is False]
+        simple_requests = [request for request in requests if request.simple is True]
+        self.assertTrue(all(request.structure_type is None for request in simple_requests))
+        self.assertEqual(
+            [request.structure_type for request in complex_requests],
+            [COMPLEX_STRUCTURE_TYPES[idx % len(COMPLEX_STRUCTURE_TYPES)] for idx in range(8)],
+        )
 
 
 if __name__ == "__main__":

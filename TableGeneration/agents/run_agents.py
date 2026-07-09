@@ -26,6 +26,16 @@ BALANCED_CONFIGS = [
     ("complex_plain_unlined", False, False, False),
 ]
 
+COMPLEX_STRUCTURE_TYPES = [
+    "grouped_columns",
+    "left_headers",
+    "body_rowspan",
+    "mixed_headers",
+    "two_axis_header",
+    "summary_row_colspan",
+    "multi_level_column_header",
+]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -47,10 +57,17 @@ def parse_args():
     parser.add_argument("--colored", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--lined", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--balanced_configs", action="store_true")
+    parser.add_argument("--balanced_structures", action="store_true")
     parser.add_argument("--brower", type=str, default="chrome")
     parser.add_argument("--brower_width", type=int, default=1920)
     parser.add_argument("--brower_height", type=int, default=2440)
     parser.add_argument("--chrome_driver_path", type=str, default=None)
+    parser.add_argument(
+        "--semantic_mode",
+        choices=("auto", "llm", "rule"),
+        default="auto",
+        help="auto/llm enables LLM semantic agents with rule fallback; rule disables LLM calls.",
+    )
     parser.add_argument("--use_llm_topic", action="store_true")
     parser.add_argument("--llm_topic_api_key", type=str, default=None)
     parser.add_argument("--llm_topic_base_url", type=str, default=None)
@@ -78,7 +95,7 @@ def find_default_chromedriver():
     return None
 
 
-def build_request(args, simple=None, colored=None, lined=None, config_id=None):
+def build_request(args, simple=None, colored=None, lined=None, config_id=None, structure_type=None):
     return TableRequest(
         domain=args.domain,
         language=args.language,
@@ -90,6 +107,7 @@ def build_request(args, simple=None, colored=None, lined=None, config_id=None):
         colored=colored,
         lined=lined,
         config_id=config_id,
+        structure_type=structure_type,
     )
 
 
@@ -109,19 +127,32 @@ def max_attempts(args):
 def request_for_index(args, idx):
     if args.balanced_configs:
         config_id, simple, colored, lined = BALANCED_CONFIGS[idx % len(BALANCED_CONFIGS)]
-        return build_request(args, simple, colored, lined, config_id)
+        structure_type = structure_type_for_index(args, idx, simple)
+        return build_request(args, simple, colored, lined, config_id, structure_type)
     simple = True if args.simple else False if args.complex else None
+    structure_type = structure_type_for_index(args, idx, simple)
     return build_request(
         args,
         simple=simple,
         colored=args.colored,
         lined=args.lined,
         config_id="manual",
+        structure_type=structure_type,
     )
 
 
 def requests_for_args(args):
     return [request_for_index(args, idx) for idx in range(target_num(args))]
+
+
+def structure_type_for_index(args, idx, simple):
+    if not args.balanced_structures or simple is True:
+        return None
+    if args.balanced_configs:
+        complex_position = sum(1 for i in range(idx + 1) if not BALANCED_CONFIGS[i % len(BALANCED_CONFIGS)][1]) - 1
+    else:
+        complex_position = idx
+    return COMPLEX_STRUCTURE_TYPES[complex_position % len(COMPLEX_STRUCTURE_TYPES)]
 
 
 def classify_error(error):
@@ -134,6 +165,12 @@ def classify_error(error):
     if "render" in lowered or "selenium" in lowered or "webdriver" in lowered:
         return "render_failed"
     return "generation_failed"
+
+
+def use_llm(args, stage):
+    if args.semantic_mode == "rule":
+        return False
+    return args.semantic_mode in ("auto", "llm") or getattr(args, f"use_llm_{stage}")
 
 
 def build_report(args, success_records, failures, attempts):
@@ -212,8 +249,11 @@ def main():
     args = parse_args()
     if args.brower == "chrome" and args.chrome_driver_path is None:
         args.chrome_driver_path = find_default_chromedriver()
+    use_llm_topic = use_llm(args, "topic")
+    use_llm_header = use_llm(args, "header")
+    use_llm_body = use_llm(args, "body")
     llm_topic_client = None
-    if args.use_llm_topic:
+    if use_llm_topic:
         llm_topic_client = LLMTopicClient(
             api_key=args.llm_topic_api_key,
             base_url=args.llm_topic_base_url,
@@ -221,7 +261,7 @@ def main():
             system_prompt=args.llm_topic_system_prompt,
         )
     llm_header_client = None
-    if args.use_llm_header:
+    if use_llm_header:
         llm_header_client = LLMHeaderClient(
             api_key=args.llm_header_api_key,
             base_url=args.llm_header_base_url,
@@ -229,7 +269,7 @@ def main():
             system_prompt=args.llm_header_system_prompt,
         )
     llm_body_client = None
-    if args.use_llm_body:
+    if use_llm_body:
         llm_body_client = LLMBodyClient(
             api_key=args.llm_body_api_key,
             base_url=args.llm_body_base_url,
@@ -240,9 +280,9 @@ def main():
         llm_topic_client=llm_topic_client,
         llm_header_client=llm_header_client,
         llm_body_client=llm_body_client,
-        use_llm_topic=args.use_llm_topic,
-        use_llm_header=args.use_llm_header,
-        use_llm_body=args.use_llm_body,
+        use_llm_topic=use_llm_topic,
+        use_llm_header=use_llm_header,
+        use_llm_body=use_llm_body,
     )
     renderer = RendererTool(
         output=args.output,

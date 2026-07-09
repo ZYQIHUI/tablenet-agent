@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -15,6 +15,7 @@ class TableRequest:
     colored: Optional[bool] = None
     lined: Optional[bool] = None
     config_id: Optional[str] = None
+    structure_type: Optional[str] = None
 
 
 @dataclass
@@ -28,6 +29,8 @@ class TablePlan:
     colored: bool
     lined: bool
     config_id: Optional[str] = None
+    semantic_scenario: str = "general"
+    structure_type: Optional[str] = None
 
 
 @dataclass
@@ -58,6 +61,7 @@ class TableStyle:
     table_css: str
     cell_css: str
     header_css: str
+    visual: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
