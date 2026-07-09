@@ -86,11 +86,34 @@ class CoreAgent:
         return filling_report.title_score <= 0.0 or filling_report.header_score <= 0.0
 
     def _format_filling_error(self, filling_report):
+        low_dimensions = self._low_filling_dimensions(filling_report)
+        low_dimension_text = ""
+        if low_dimensions:
+            low_dimension_text = ", low_dimensions=" + ",".join(low_dimensions)
+        issues = list(filling_report.errors)
+        if not issues:
+            issues = list(filling_report.warnings)
+        issue_text = "; ".join(issues[:5]) if issues else "no detailed filling issue reported"
         return (
             "invalid table filling "
             f"(score={filling_report.score:.3f}, "
             f"title={filling_report.title_score:.3f}, "
             f"header={filling_report.header_score:.3f}, "
-            f"body={filling_report.body_score:.3f}): "
-            + "; ".join(filling_report.errors)
+            f"body={filling_report.body_score:.3f}, "
+            f"topic_consistency={getattr(filling_report, 'topic_consistency_score', 1.0):.3f}"
+            f"{low_dimension_text}): "
+            + issue_text
         )
+
+    def _low_filling_dimensions(self, filling_report):
+        dimension_scores = getattr(filling_report, "dimension_scores", None) or {
+            "title": filling_report.title_score,
+            "header": filling_report.header_score,
+            "body": filling_report.body_score,
+            "topic_consistency": getattr(filling_report, "topic_consistency_score", 1.0),
+        }
+        return [
+            f"{name}:{score:.3f}"
+            for name, score in sorted(dimension_scores.items(), key=lambda item: item[1])
+            if score < 0.6
+        ][:3]

@@ -13,8 +13,10 @@ class FillingCheckReport:
     title_score: float
     header_score: float
     body_score: float
+    topic_consistency_score: float = 1.0
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    dimension_scores: Dict[str, float] = field(default_factory=dict)
     column_scores: Dict[int, float] = field(default_factory=dict)
     cell_scores: Dict[Tuple[int, int], float] = field(default_factory=dict)
 
@@ -44,6 +46,21 @@ class FillingChecker:
     PERCENT_HINTS = ("率", "同比", "进度", "占比", "满意度", "覆盖率")
     STATUS_HINTS = ("状态", "备注", "类型", "时段", "偏好", "设备")
     ENTITY_HINTS = ("区域", "部门", "项目", "用户类型", "客户类型", "群体", "负责人")
+    DATE_HINTS = ("日期", "时间")
+    ID_HINTS = ("编号", "工单")
+    PERSON_HINTS = ("人员", "负责人")
+    COMMENT_HINTS = ("备注", "建议", "意见")
+    SCENARIO_KEYWORDS = {
+        "base_station_maintenance": ("基站", "站点", "巡检", "告警", "处理", "维护", "区域"),
+        "network_coverage": ("区域", "覆盖", "弱覆盖", "速率", "掉线", "优化", "验收"),
+        "customer_complaints": ("投诉", "受理", "完结", "响应", "满意", "部门", "复核"),
+        "package_revenue": ("套餐", "订购", "新增", "退订", "收入", "ARPU", "转化", "同比"),
+        "traffic_monitoring": ("监控", "流量", "带宽", "活跃", "拥塞", "时延", "丢包", "扩容"),
+        "broadband_installation": ("装机", "预约", "完成", "超时", "修复", "装维", "评分", "工单"),
+        "telecommunications": ("区域", "站点", "用户", "故障", "完成率", "收入", "网络", "覆盖", "流量"),
+        "finance": ("部门", "预算", "支出", "收入", "利润", "同比", "风险", "状态"),
+        "general": ("项目", "负责人", "数量", "进度", "状态", "评分", "日期", "备注"),
+    }
     DEFAULT_MIN_SCORE = 0.58
 
     def __init__(self, min_score: float = DEFAULT_MIN_SCORE):
@@ -57,13 +74,15 @@ class FillingChecker:
         cell_scores: Dict[Tuple[int, int], float] = {}
 
         title_score = self._score_title(schema, plan, errors, warnings)
-        header_score = self._score_headers(schema, headers, errors, warnings, column_scores)
+        header_score = self._score_headers(schema, plan, headers, errors, warnings, column_scores)
         body_score = self._score_body(schema, headers, errors, warnings, cell_scores, column_scores)
+        topic_consistency_score = self._score_topic_consistency(schema, plan, headers, errors, warnings)
 
         score = round(
-            0.2 * title_score +
-            0.25 * header_score +
-            0.55 * body_score,
+            0.18 * title_score +
+            0.27 * header_score +
+            0.40 * body_score +
+            0.15 * topic_consistency_score,
             4,
         )
         threshold = self.min_score if min_score is None else min_score
@@ -77,8 +96,15 @@ class FillingChecker:
             title_score=round(title_score, 4),
             header_score=round(header_score, 4),
             body_score=round(body_score, 4),
+            topic_consistency_score=round(topic_consistency_score, 4),
             errors=errors,
             warnings=warnings,
+            dimension_scores={
+                "title": round(title_score, 4),
+                "header": round(header_score, 4),
+                "body": round(body_score, 4),
+                "topic_consistency": round(topic_consistency_score, 4),
+            },
             column_scores=column_scores,
             cell_scores=cell_scores,
         )
@@ -125,6 +151,7 @@ class FillingChecker:
     def _score_headers(
             self,
             schema: TableSchema,
+            plan: TablePlan,
             headers: Dict[int, str],
             errors: List[str],
             warnings: List[str],
@@ -138,6 +165,9 @@ class FillingChecker:
         passed = 0
         seen = set()
         duplicate_count = 0
+        generic_count = 0
+        semantic_hits = 0
+        semantic_keywords = self._semantic_keywords(plan)
 
         for cell in header_cells:
             text = cell.text.strip()
@@ -149,6 +179,10 @@ class FillingChecker:
             if text in seen:
                 duplicate_count += 1
             seen.add(text)
+            if self._is_generic_header(text):
+                generic_count += 1
+            if self._text_has_any(text, semantic_keywords) or self._token_overlap(text, plan.topic) > 0.0:
+                semantic_hits += 1
 
             coverage = 0
             for col in range(cell.col, cell.col + cell.colspan):
@@ -161,13 +195,19 @@ class FillingChecker:
 
         if duplicate_count:
             warnings.append(f"header duplication detected in {duplicate_count} header cells")
+        if generic_count:
+            warnings.append(f"generic header text detected in {generic_count} header cells")
 
         if total == 0:
             return 0.0
 
         non_empty_ratio = passed / total
         uniqueness_ratio = len(seen) / max(1, total)
-        return min(1.0, 0.7 * non_empty_ratio + 0.3 * uniqueness_ratio)
+        semantic_ratio = semantic_hits / total
+        if semantic_hits == 0 and semantic_keywords:
+            warnings.append("headers do not contain topic or semantic scenario signals")
+        generic_penalty = 0.08 * generic_count / total
+        return max(0.0, min(1.0, 0.5 * non_empty_ratio + 0.25 * uniqueness_ratio + 0.25 * semantic_ratio - generic_penalty))
 
     def _score_body(
             self,
@@ -206,6 +246,8 @@ class FillingChecker:
                 errors.append(f"percentage-like column has non-percentage value at ({cell.row}, {cell.col})")
             elif issue == "numeric":
                 errors.append(f"numeric-like column has non-numeric value at ({cell.row}, {cell.col})")
+            elif issue == "semantic_mismatch":
+                warnings.append(f"body cell at ({cell.row}, {cell.col}) does not match header '{header}'")
             elif issue == "weak_text":
                 warnings.append(f"body cell at ({cell.row}, {cell.col}) looks generic for header '{header}'")
 
@@ -231,6 +273,9 @@ class FillingChecker:
                 return 1.0, None
             return 0.0, "numeric"
 
+        if not self._matches_header_semantics(header, text):
+            return 0.35, "semantic_mismatch"
+
         if expected_type == "entity":
             if self._looks_like_entity(text):
                 return 0.95, None
@@ -248,6 +293,37 @@ class FillingChecker:
             return 0.55, "weak_text"
 
         return 0.9, None
+
+    def _score_topic_consistency(
+            self,
+            schema: TableSchema,
+            plan: TablePlan,
+            headers: Dict[int, str],
+            errors: List[str],
+            warnings: List[str]) -> float:
+        keywords = self._semantic_keywords(plan)
+        texts = [cell.text.strip() for cell in schema.cells if cell.text.strip()]
+        title_texts = [cell.text.strip() for cell in schema.cells if cell.role == "title" and cell.text.strip()]
+        header_texts = [text.strip() for text in headers.values() if text.strip()]
+        body_texts = [cell.text.strip() for cell in schema.cells if cell.role == "body" and cell.text.strip()]
+        corpus = " ".join(texts)
+
+        topic_hit = bool(plan.topic and plan.topic in corpus) or self._token_overlap(corpus, plan.topic) > 0.0
+        keyword_hits = sum(1 for keyword in keywords if keyword and keyword in corpus)
+        header_keyword_hits = sum(1 for text in set(header_texts) if self._text_has_any(text, keywords))
+        body_keyword_hits = sum(1 for text in body_texts if self._text_has_any(text, keywords))
+
+        title_part = 1.0 if (plan.simple or title_texts) and topic_hit else 0.45
+        keyword_part = min(1.0, keyword_hits / 3) if keywords else 0.7
+        header_part = min(1.0, header_keyword_hits / max(1, min(3, len(set(header_texts)))))
+        body_part = min(1.0, body_keyword_hits / max(1, min(4, len(body_texts))))
+        score = 0.25 * title_part + 0.35 * keyword_part + 0.25 * header_part + 0.15 * body_part
+
+        if score < 0.35:
+            errors.append("table content is not aligned with the planned topic or semantic scenario")
+        elif score < 0.6:
+            warnings.append("weak topic or semantic scenario consistency")
+        return score
 
     def _headers_by_col(self, schema: TableSchema):
         headers = {}
@@ -267,6 +343,38 @@ class FillingChecker:
         if any(hint in header for hint in self.STATUS_HINTS):
             return "status"
         return "text"
+
+    def _matches_header_semantics(self, header: str, text: str) -> bool:
+        if any(hint in header for hint in self.DATE_HINTS):
+            return any(char.isdigit() for char in text) and ("-" in text or "/" in text or "年" in text or "月" in text)
+        if any(hint in header for hint in self.ID_HINTS):
+            return any(char.isdigit() for char in text) or any(hint in text for hint in ("BS", "单", "编号"))
+        if any(hint in header for hint in self.PERSON_HINTS):
+            return any(hint in text for hint in ("工", "员", "经理", "主管", "张", "李", "王", "赵", "陈"))
+        if any(hint in header for hint in self.COMMENT_HINTS):
+            return len(text) > 2 and not self._is_numeric_like(text)
+        if "投诉类型" in header:
+            return any(hint in text for hint in ("慢", "掉线", "计费", "延迟", "信号", "服务", "投诉"))
+        if "套餐" in header:
+            return "套餐" in text or "流量包" in text
+        if "时段" in header:
+            return any(hint in text for hint in ("峰", "午", "夜", "节假日", "工作日", "时"))
+        return True
+
+    def _semantic_keywords(self, plan: TablePlan):
+        keywords = set()
+        keywords.update(self.SCENARIO_KEYWORDS.get(plan.domain, ()))
+        keywords.update(self.SCENARIO_KEYWORDS.get(plan.semantic_scenario, ()))
+        keywords.update(self._tokenize(plan.topic))
+        return {keyword for keyword in keywords if keyword}
+
+    def _text_has_any(self, text: str, keywords) -> bool:
+        return any(keyword and keyword in text for keyword in keywords)
+
+    def _is_generic_header(self, text: str) -> bool:
+        if not text:
+            return True
+        return text in {"字段", "名称", "指标", "数据", "内容", "说明", "项目一", "项目二", "项目三"}
 
     def _looks_like_percent(self, text: str) -> bool:
         if text.endswith("%"):

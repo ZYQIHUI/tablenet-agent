@@ -11,7 +11,8 @@ class LLMHeaderClient:
     DEFAULT_SYSTEM_PROMPT = (
         "You are a domain-aware table header generation agent. "
         "Generate concise, realistic headers for synthetic business tables. "
-        "Return valid JSON only."
+        "Return valid JSON only with text lists: headers, group_headers, row_headers. "
+        "Do not generate table structure, rows, cells, HTML, or metadata."
     )
 
     def __init__(self, api_key=None, base_url=None, model=None, system_prompt=None):
@@ -66,12 +67,7 @@ class LLMHeaderClient:
         return f"{base_url}/chat/completions"
 
     def _parse_headers(self, content: str):
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.strip("`").strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
-        data = json.loads(content)
+        data = self._loads_json_object(content)
         headers = self._clean_list(data.get("headers"))
         group_headers = self._clean_list(data.get("group_headers"))
         row_headers = self._clean_list(data.get("row_headers"))
@@ -88,6 +84,25 @@ class LLMHeaderClient:
             return []
         return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
+    def _loads_json_object(self, content: str):
+        if not isinstance(content, str):
+            raise ValueError("LLM response must be a string")
+        content = content.strip()
+        if content.startswith("```"):
+            lines = content.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            raise ValueError("LLM response must be a JSON object")
+        forbidden_keys = {"rows", "cols", "cells", "schema", "html", "structure"}
+        if any(key in data for key in forbidden_keys):
+            raise ValueError("LLM header response must not include table structure")
+        return data
+
     def _build_prompt(self, domain: str, language: str, topic: str, cols: int) -> str:
         payload = {
             "domain": domain,
@@ -97,6 +112,7 @@ class LLMHeaderClient:
             "task": (
                 "Generate headers for a table about the topic. "
                 "Return JSON only with keys: headers, group_headers, row_headers. "
+                "Only return text lists; do not return table structure, cells, HTML, or row/column counts. "
                 "headers should contain at least column_count short leaf headers. "
                 "group_headers should contain 3 to 5 higher-level header group names. "
                 "row_headers should contain 6 short row labels suitable for the domain."

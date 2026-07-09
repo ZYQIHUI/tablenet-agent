@@ -8,14 +8,15 @@ from urllib.request import Request, urlopen
 class LLMTopicClient:
     """Optional LLM entry point for TopicAgent.
 
-    Fill in generate_topic with your preferred model API. Return either a plain
-    topic string or a dict like {"topic": "..."}.
+    Returns a validated dict for TopicAgent or None when the model response
+    cannot be trusted.
     """
 
     DEFAULT_SYSTEM_PROMPT = (
         "You are a domain-aware table topic generation agent. "
-        "Generate concise, specific, realistic table topics for synthetic table data. "
-        "Return valid JSON only."
+        "Generate concise, specific, realistic table plans for synthetic table data. "
+        "Return valid JSON only with keys: topic, domain, semantic_scenario, rows, cols, attributes. "
+        "attributes may contain simple, colored, and lined booleans. Do not generate table cells."
     )
 
     def __init__(self, api_key=None, base_url=None, model=None, system_prompt=None):
@@ -30,8 +31,16 @@ class LLMTopicClient:
             or self.DEFAULT_SYSTEM_PROMPT
         )
 
-    def generate_topic(self, domain: str, language: str, used_topics):
-        prompt = self._build_prompt(domain, language, used_topics)
+    def generate_topic(
+            self,
+            domain: str,
+            language: str,
+            used_topics,
+            min_rows: int = 4,
+            max_rows: int = 12,
+            min_cols: int = 3,
+            max_cols: int = 8):
+        prompt = self._build_prompt(domain, language, used_topics, min_rows, max_rows, min_cols, max_cols)
         if not self.api_key or not self.base_url or not self.model:
             return None
         try:
@@ -70,23 +79,84 @@ class LLMTopicClient:
         return f"{base_url}/chat/completions"
 
     def _parse_topic(self, content: str):
+        data = self._loads_json_object(content)
+        topic = self._clean_text(data.get("topic"))
+        if not topic:
+            return None
+        result = {
+            "topic": topic,
+            "domain": self._clean_text(data.get("domain")),
+            "semantic_scenario": self._clean_text(data.get("semantic_scenario")),
+        }
+        for key in ("rows", "cols"):
+            value = data.get(key)
+            if isinstance(value, bool):
+                continue
+            try:
+                result[key] = int(value)
+            except (TypeError, ValueError):
+                pass
+        attributes = data.get("attributes")
+        if isinstance(attributes, dict):
+            result["attributes"] = {
+                key: value for key, value in attributes.items()
+                if key in ("simple", "colored", "lined") and isinstance(value, bool)
+            }
+        else:
+            result["attributes"] = {
+                key: data[key] for key in ("simple", "colored", "lined")
+                if isinstance(data.get(key), bool)
+            }
+        return result
+
+    def _loads_json_object(self, content: str):
+        if not isinstance(content, str):
+            raise ValueError("LLM response must be a string")
         content = content.strip()
         if content.startswith("```"):
-            content = content.strip("`").strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
+            lines = content.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
         data = json.loads(content)
-        return data.get("topic")
+        if not isinstance(data, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return data
 
-    def _build_prompt(self, domain: str, language: str, used_topics) -> str:
+    def _clean_text(self, value):
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value or None
+
+    def _build_prompt(self, domain: str, language: str, used_topics, min_rows, max_rows, min_cols, max_cols) -> str:
         payload = {
             "domain": domain,
             "language": language,
             "used_topics": used_topics,
+            "bounds": {
+                "min_rows": min_rows,
+                "max_rows": max_rows,
+                "min_cols": min_cols,
+                "max_cols": max_cols,
+            },
             "task": (
-                "Generate one concise, domain-specific table topic. "
-                "Avoid used topics and return JSON only: {\"topic\": \"...\"}."
+                "Generate one concise, domain-specific table plan. "
+                "Avoid used topics. Return JSON only with keys: "
+                "topic, domain, semantic_scenario, rows, cols, attributes. "
+                "rows and cols must stay inside bounds. "
+                "attributes must only contain boolean simple, colored, lined."
             ),
+            "format": {
+                "topic": "客户投诉受理与闭环统计",
+                "domain": domain,
+                "semantic_scenario": "customer_complaints",
+                "rows": min_rows,
+                "cols": min_cols,
+                "attributes": {"simple": True, "colored": False, "lined": True},
+            },
         }
         return json.dumps(payload, ensure_ascii=False)
 

@@ -106,10 +106,19 @@ class TopicAgent:
         simple = request.simple if request.simple is not None else random.random() < 0.55
         colored = request.colored if request.colored is not None else random.random() < 0.4
         lined = request.lined if request.lined is not None else random.random() < 0.7
-        semantic_scenario, topic = self._choose_topic(request)
+        semantic_scenario, topic, llm_plan = self._choose_topic(request)
+        if llm_plan:
+            rows = self._bounded_int(llm_plan.get("rows"), request.min_rows, request.max_rows, rows)
+            cols = self._bounded_int(llm_plan.get("cols"), request.min_cols, request.max_cols, cols)
+            attributes = llm_plan.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = llm_plan
+            simple = self._coerce_optional_bool(attributes.get("simple"), simple, request.simple)
+            colored = self._coerce_optional_bool(attributes.get("colored"), colored, request.colored)
+            lined = self._coerce_optional_bool(attributes.get("lined"), lined, request.lined)
         self.used_topics.add(topic)
         return TablePlan(
-            domain=request.domain,
+            domain=self._normalize_text(llm_plan.get("domain")) if llm_plan and self._normalize_text(llm_plan.get("domain")) else request.domain,
             language=request.language,
             topic=topic,
             rows=rows,
@@ -124,30 +133,50 @@ class TopicAgent:
 
     def _choose_topic(self, request: TableRequest):
         if self.use_llm:
-            topic = self._topic_from_llm(request)
-            if topic:
-                return "llm_generated", topic
-        return self._topic_from_rules(request)
+            topic_plan = self._topic_from_llm(request)
+            if topic_plan:
+                scenario = self._normalize_text(topic_plan.get("semantic_scenario")) or "llm_generated"
+                return scenario, topic_plan["topic"], topic_plan
+        scenario, topic = self._topic_from_rules(request)
+        return scenario, topic, None
 
-    def _topic_from_llm(self, request: TableRequest) -> Optional[str]:
+    def _topic_from_llm(self, request: TableRequest) -> Optional[dict]:
         try:
             if self.llm_topic_fn is not None:
-                topic = self.llm_topic_fn(
-                    domain=request.domain,
-                    language=request.language,
-                    used_topics=sorted(self.used_topics),
-                )
+                topic = self._call_topic_fn(request)
             elif self.llm_topic_client is not None:
                 topic = self.llm_topic_client.generate_topic(
                     domain=request.domain,
                     language=request.language,
                     used_topics=sorted(self.used_topics),
+                    min_rows=request.min_rows,
+                    max_rows=request.max_rows,
+                    min_cols=request.min_cols,
+                    max_cols=request.max_cols,
                 )
             else:
                 return None
         except Exception:
             return None
-        return self._normalize_topic(topic)
+        return self._normalize_topic_plan(topic, request)
+
+    def _call_topic_fn(self, request: TableRequest):
+        try:
+            return self.llm_topic_fn(
+                domain=request.domain,
+                language=request.language,
+                used_topics=sorted(self.used_topics),
+                min_rows=request.min_rows,
+                max_rows=request.max_rows,
+                min_cols=request.min_cols,
+                max_cols=request.max_cols,
+            )
+        except TypeError:
+            return self.llm_topic_fn(
+                domain=request.domain,
+                language=request.language,
+                used_topics=sorted(self.used_topics),
+            )
 
     def _topic_from_rules(self, request: TableRequest):
         scenarios = self.SCENARIOS.get(request.domain, self.SCENARIOS["general"])
@@ -158,12 +187,38 @@ class TopicAgent:
             available_topics = topics
         return scenario, random.choice(available_topics)
 
-    def _normalize_topic(self, topic) -> Optional[str]:
-        if isinstance(topic, dict):
-            topic = topic.get("topic")
-        if not isinstance(topic, str):
+    def _normalize_topic_plan(self, value, request: TableRequest) -> Optional[dict]:
+        if isinstance(value, str):
+            value = {"topic": value}
+        if not isinstance(value, dict):
             return None
-        topic = topic.strip()
+        topic = self._normalize_text(value.get("topic"))
         if not topic or topic in self.used_topics:
             return None
-        return topic
+        plan = dict(value)
+        plan["topic"] = topic
+        if self._normalize_text(plan.get("domain")) is None:
+            plan["domain"] = request.domain
+        return plan
+
+    def _normalize_text(self, value) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value or None
+
+    def _bounded_int(self, value, lower: int, upper: int, fallback: int) -> int:
+        if isinstance(value, bool):
+            return fallback
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        return max(lower, min(upper, value))
+
+    def _coerce_optional_bool(self, value, fallback: bool, requested):
+        if requested is not None:
+            return requested
+        if isinstance(value, bool):
+            return value
+        return fallback

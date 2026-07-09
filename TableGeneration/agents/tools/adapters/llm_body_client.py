@@ -11,7 +11,8 @@ class LLMBodyClient:
     DEFAULT_SYSTEM_PROMPT = (
         "You are a domain-aware table body generation agent. "
         "Generate realistic body values that match the headers and topic. "
-        "Return valid JSON only."
+        "Return valid JSON only with values as a text list or cell_values as a text mapping. "
+        "Do not generate table structure, headers, HTML, or metadata."
     )
 
     def __init__(self, api_key=None, base_url=None, model=None, system_prompt=None):
@@ -66,21 +67,53 @@ class LLMBodyClient:
         return f"{base_url}/chat/completions"
 
     def _parse_values(self, content: str, expected_len: int):
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.strip("`").strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
-        data = json.loads(content)
+        data = self._loads_json_object(content)
         values = data.get("values")
+        if isinstance(values, dict):
+            return self._clean_mapping(values)
+        if values is None and isinstance(data.get("cell_values"), dict):
+            return self._clean_mapping(data.get("cell_values"))
         if not isinstance(values, list) or len(values) != expected_len:
             return None
         cleaned = []
         for value in values:
             if not isinstance(value, (str, int, float)):
                 return None
-            cleaned.append(str(value).strip())
+            text = str(value).strip()
+            if not text:
+                return None
+            cleaned.append(text)
         return cleaned
+
+    def _clean_mapping(self, values):
+        cleaned = {}
+        for key, value in values.items():
+            if not isinstance(key, str) or not isinstance(value, (str, int, float)):
+                return None
+            text = str(value).strip()
+            if not text:
+                return None
+            cleaned[key.strip()] = text
+        return cleaned or None
+
+    def _loads_json_object(self, content: str):
+        if not isinstance(content, str):
+            raise ValueError("LLM response must be a string")
+        content = content.strip()
+        if content.startswith("```"):
+            lines = content.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            raise ValueError("LLM response must be a JSON object")
+        forbidden_keys = {"rows", "cols", "cells", "schema", "html", "headers"}
+        if any(key in data for key in forbidden_keys):
+            raise ValueError("LLM body response must not include table structure")
+        return data
 
     def _build_prompt(self, domain, language, topic, headers, row_headers, body_cells) -> str:
         payload = {
@@ -91,10 +124,11 @@ class LLMBodyClient:
             "row_headers": row_headers,
             "body_cells": body_cells,
             "task": (
-                "Generate a JSON object with one key: values. "
+                "Generate a JSON object with values or cell_values. "
                 "values must be a list of strings, same length and order as body_cells. "
+                "Alternatively, cell_values may map \"row,col\" to a string. "
                 "Each value should match the corresponding header, row label, and expected_type. "
-                "Return JSON only."
+                "Return only body text; do not return structure, headers, cells, HTML, rows, or cols."
             ),
         }
         return json.dumps(payload, ensure_ascii=False)

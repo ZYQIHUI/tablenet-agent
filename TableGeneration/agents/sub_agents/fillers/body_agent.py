@@ -73,14 +73,17 @@ class BodyAgent:
             for cell in sorted(schema.cells, key=lambda item: (item.row, item.col))
             if cell.role == "body"
         ]
-        values = self.llm_body_client.generate_body_values(
-            domain=plan.domain,
-            language=plan.language,
-            topic=plan.topic,
-            headers=[headers.get(col, "") for col in range(schema.cols)],
-            row_headers=row_headers,
-            body_cells=body_cells,
-        )
+        try:
+            values = self.llm_body_client.generate_body_values(
+                domain=plan.domain,
+                language=plan.language,
+                topic=plan.topic,
+                headers=[headers.get(col, "") for col in range(schema.cols)],
+                row_headers=row_headers,
+                body_cells=body_cells,
+            )
+        except Exception:
+            return None
         if not values:
             return None
         return values, body_cells
@@ -90,9 +93,17 @@ class BodyAgent:
             cell for cell in sorted(schema.cells, key=lambda item: (item.row, item.col))
             if cell.role == "body"
         ]
+        if isinstance(values, dict):
+            values = self._values_from_mapping(schema_body_cells, values)
+            if values is None:
+                return False
+        elif not isinstance(values, list):
+            return False
         if len(values) != len(schema_body_cells):
             return False
         if len(body_cells) != len(schema_body_cells):
+            return False
+        if not all(isinstance(value, (str, int, float)) and str(value).strip() for value in values):
             return False
         for schema_cell, value, body_meta in zip(schema_body_cells, values, body_cells):
             schema_cell.text = self._normalize_value(
@@ -101,6 +112,17 @@ class BodyAgent:
                 value,
             )
         return True
+
+    def _values_from_mapping(self, schema_body_cells, values):
+        ordered = []
+        for cell in schema_body_cells:
+            key = f"{cell.row},{cell.col}"
+            alt_key = f"{cell.row}:{cell.col}"
+            value = values.get(key, values.get(alt_key))
+            if not isinstance(value, (str, int, float)) or not str(value).strip():
+                return None
+            ordered.append(str(value).strip())
+        return ordered
 
     def _headers_by_col(self, schema: TableSchema):
         headers = {}

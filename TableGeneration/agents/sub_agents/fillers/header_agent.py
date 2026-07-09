@@ -110,12 +110,33 @@ class HeaderAgent:
     def _headers_from_llm(self, plan: TablePlan):
         if not self.use_llm or self.llm_header_client is None:
             return None
-        return self.llm_header_client.generate_headers(
-            domain=plan.domain,
-            language=plan.language,
-            topic=plan.topic,
-            cols=plan.cols,
-        )
+        try:
+            generated = self.llm_header_client.generate_headers(
+                domain=plan.domain,
+                language=plan.language,
+                topic=plan.topic,
+                cols=plan.cols,
+            )
+        except Exception:
+            return None
+        return self._normalize_llm_headers(generated)
+
+    def _normalize_llm_headers(self, generated):
+        if not isinstance(generated, dict):
+            return None
+        normalized = {
+            "headers": self._clean_text_list(generated.get("headers")),
+            "group_headers": self._clean_text_list(generated.get("group_headers")),
+            "row_headers": self._clean_text_list(generated.get("row_headers")),
+        }
+        if not normalized["headers"]:
+            return None
+        return normalized
+
+    def _clean_text_list(self, value):
+        if not isinstance(value, list):
+            return []
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
     def _merge_headers(self, fallback, generated):
         if not generated:

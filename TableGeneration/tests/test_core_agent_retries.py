@@ -91,14 +91,22 @@ def schema():
     )
 
 
-def report(ok, score=1.0, header=1.0, body=1.0):
+def report(ok, score=1.0, header=1.0, body=1.0, topic_consistency=1.0, warnings=None):
     return FillingCheckReport(
         ok=ok,
         score=score,
         title_score=1.0,
         header_score=header,
         body_score=body,
+        topic_consistency_score=topic_consistency,
+        dimension_scores={
+            "title": 1.0,
+            "header": header,
+            "body": body,
+            "topic_consistency": topic_consistency,
+        },
         errors=[] if ok else ["synthetic filling issue"],
+        warnings=warnings or [],
     )
 
 
@@ -141,6 +149,27 @@ class CoreAgentRetriesTest(unittest.TestCase):
         self.assertEqual(table.html, "<table></table>")
         self.assertEqual(agent.schema_agent.calls, 2)
         self.assertEqual(agent.filling_checker.calls, 1)
+
+    def test_filling_failure_reports_low_dimensions(self):
+        agent = self.agent()
+        agent.schema_agent = SequenceSchemaAgent([schema()])
+        agent.validator_agent = SequenceValidator([(True, [])])
+        agent.filling_checker = SequenceFillingChecker([
+            report(
+                False,
+                score=0.42,
+                header=0.5,
+                body=0.35,
+                topic_consistency=0.2,
+                warnings=["weak topic or semantic scenario consistency"],
+            ),
+        ])
+        with self.assertRaises(ValueError) as raised:
+            agent.generate(TableRequest())
+        message = str(raised.exception)
+        self.assertIn("low_dimensions=", message)
+        self.assertIn("body:0.350", message)
+        self.assertIn("topic_consistency:0.200", message)
 
 
 if __name__ == "__main__":
