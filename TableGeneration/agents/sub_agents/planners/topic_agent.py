@@ -54,6 +54,7 @@ class TopicAgent:
             simple=simple,
             colored=colored,
             lined=lined,
+            config_id=request.config_id,
         )
 
     def _choose_topic(self, request: TableRequest) -> str:

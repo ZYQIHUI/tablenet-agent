@@ -18,7 +18,7 @@ class SchemaAgent:
                 role = "header" if row == 0 else "body"
                 tag = "th" if role == "header" else "td"
                 cells.append(Cell(row=row, col=col, tag=tag, role=role))
-        return self._schema(plan, cells)
+        return self._schema(plan, cells, "simple_single_header")
 
     def _complex(self, plan: TablePlan) -> TableSchema:
         if plan.rows < 4 or plan.cols < 3:
@@ -39,7 +39,7 @@ class SchemaAgent:
                 role = "header" if row == 1 else "body"
                 tag = "th" if role == "header" else "td"
                 cells.append(Cell(row=row, col=col, tag=tag, role=role))
-        return self._schema(plan, cells)
+        return self._schema(plan, cells, "title_header")
 
     def _grouped_columns(self, plan: TablePlan) -> TableSchema:
         cells = [Cell(row=0, col=0, tag="th", role="title", colspan=plan.cols)]
@@ -53,7 +53,7 @@ class SchemaAgent:
         for row in range(3, plan.rows):
             for col in range(plan.cols):
                 cells.append(Cell(row=row, col=col, tag="td", role="body"))
-        return self._schema(plan, cells)
+        return self._schema(plan, cells, "grouped_columns")
 
     def _left_headers(self, plan: TablePlan) -> TableSchema:
         cells = [Cell(row=0, col=0, tag="th", role="title", colspan=plan.cols)]
@@ -63,7 +63,7 @@ class SchemaAgent:
             cells.append(Cell(row=row, col=0, tag="th", role="header"))
             for col in range(1, plan.cols):
                 cells.append(Cell(row=row, col=col, tag="td", role="body"))
-        return self._schema(plan, cells)
+        return self._schema(plan, cells, "left_headers")
 
     def _body_rowspan(self, plan: TablePlan) -> TableSchema:
         cells = [Cell(row=0, col=0, tag="th", role="title", colspan=plan.cols)]
@@ -78,7 +78,7 @@ class SchemaAgent:
                 for col in range(1, plan.cols):
                     cells.append(Cell(row=row + offset, col=col, tag="td", role="body"))
             row += rowspan
-        return self._schema(plan, cells)
+        return self._schema(plan, cells, "body_rowspan")
 
     def _mixed_headers(self, plan: TablePlan) -> TableSchema:
         cells = [Cell(row=0, col=0, tag="th", role="title", colspan=plan.cols)]
@@ -90,9 +90,16 @@ class SchemaAgent:
             cells.append(Cell(row=row, col=0, tag="th", role="header"))
             for col in range(1, plan.cols):
                 cells.append(Cell(row=row, col=col, tag="td", role="body"))
-        return self._schema(plan, cells)
+        return self._schema(plan, cells, "mixed_headers")
 
-    def _schema(self, plan: TablePlan, cells):
+    def _schema(self, plan: TablePlan, cells, header_type: str):
         for idx, cell in enumerate(cells):
             cell.cell_id = idx
-        return TableSchema(rows=plan.rows, cols=plan.cols, cells=cells)
+        return TableSchema(
+            rows=plan.rows,
+            cols=plan.cols,
+            cells=cells,
+            header_type=header_type,
+            has_rowspan=any(cell.rowspan > 1 for cell in cells),
+            has_colspan=any(cell.colspan > 1 for cell in cells),
+        )

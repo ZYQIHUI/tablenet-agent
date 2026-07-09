@@ -14,6 +14,7 @@ class TableRequest:
     simple: Optional[bool] = None
     colored: Optional[bool] = None
     lined: Optional[bool] = None
+    config_id: Optional[str] = None
 
 
 @dataclass
@@ -26,6 +27,7 @@ class TablePlan:
     simple: bool
     colored: bool
     lined: bool
+    config_id: Optional[str] = None
 
 
 @dataclass
@@ -45,6 +47,9 @@ class TableSchema:
     rows: int
     cols: int
     cells: List[Cell] = field(default_factory=list)
+    header_type: str = "simple_single_header"
+    has_rowspan: bool = False
+    has_colspan: bool = False
 
 
 @dataclass
@@ -63,4 +68,3 @@ class AgentTable:
     html: str
     structure_tokens: List[str]
     id_count: int
-

@@ -1,887 +1,842 @@
-# TableNet 多智能体表格生成系统 - 代码详解
+# TableNet-mini 多智能体生成系统代码说明
 
-## 📋 整体架构概览
+本文档说明 `TableGeneration/agents/` 下的当前实现。项目定位是 TableNet-mini 的生成侧复现：不追求论文 445K 规模，但尽量对齐论文中的可控生成、多智能体分工、8 路配置、质量检查、批量报告和标注输出。
 
-这是一个**规则驱动的多智能体表格生成系统**（TableNet）。它的目标是：**自动生成带有标注的表格图像数据集**，用于训练表格识别模型。
+## 1. 当前能力概览
 
-### 系统工作流程（Pipeline）
+当前代码已经具备一条可运行的数据生成闭环：
 
+```text
+TableRequest
+-> CoreAgent
+-> TopicAgent
+-> SchemaAgent
+-> StyleAgent
+-> HeaderAgent
+-> BodyAgent
+-> ValidatorAgent
+-> FillingChecker
+-> HtmlBuilder
+-> RendererTool
+-> html / img / gt.txt / meta.jsonl / cells.jsonl / report
 ```
-用户请求 → CoreAgent（协调器）
-    ↓
-1. TopicAgent   → 生成表格主题和属性
-2. SchemaAgent  → 构建表格结构（行列布局）
-3. StyleAgent   → 生成 CSS 样式
-4. HeaderAgent  → 填充表头内容
-5. BodyAgent    → 填充表体内容
-6. ValidatorAgent → 验证结构合法性
-7. FillingChecker → 验证内容合理性
-8. HtmlBuilder  → 生成最终 HTML
-    ↓
-RendererTool → 用 Selenium 渲染成图片 + 标注文件
-```
 
-### 当前目录结构
+已经实现的能力：
 
-现在代码已经按职责拆分成子包：
+- simple / complex 表格生成。
+- colored / plain 样式控制。
+- lined / unlined 样式控制。
+- 8 路 balanced config 轮询生成。
+- 可选 OpenAI-compatible LLM 入口。
+- 结构验证和填充质量评分。
+- 失败重试和批量报告。
+- PP-Structure 风格 `gt.txt`。
+- 样本级 `meta.jsonl`。
+- cell-level `cells.jsonl`。
+
+仍然待增强的能力：
+
+- 更丰富的 complex 结构类型。
+- 更细的视觉扰动和视觉标签。
+- 完整 S / C / H / V 标注体系。
+- copy / delete / swap / alter 数据增强。
+- Agent Tool vs LLM Direct 的结构保真度实验。
+- TSR 微调和主动学习实验。
+
+## 2. 目录结构
 
 ```text
 agents/
-  core_agent.py
-  types.py
-  sub_agents/
-    planners/
-      topic_agent.py
-      schema_agent.py
-      style_agent.py
-    fillers/
-      header_agent.py
-      body_agent.py
-    validators/
-      validator_agent.py
-      filling_checker.py
-  tools/
-    adapters/
-      llm_topic_client.py
-      llm_header_client.py
-      llm_body_client.py
-    rendering/
-      html_builder.py
-      renderer_tool.py
+├─ core_agent.py
+├─ run_agents.py
+├─ types.py
+├─ codeExplain.md
+├─ sub_agents/
+│  ├─ planners/
+│  │  ├─ topic_agent.py
+│  │  ├─ schema_agent.py
+│  │  └─ style_agent.py
+│  ├─ fillers/
+│  │  ├─ header_agent.py
+│  │  └─ body_agent.py
+│  └─ validators/
+│     ├─ validator_agent.py
+│     └─ filling_checker.py
+└─ tools/
+   ├─ adapters/
+   │  ├─ llm_topic_client.py
+   │  ├─ llm_header_client.py
+   │  └─ llm_body_client.py
+   └─ rendering/
+      ├─ html_builder.py
+      └─ renderer_tool.py
 ```
 
----
+## 3. 核心数据结构
 
-## 📁 逐文件详解
+所有核心类型都定义在 `types.py`。
 
-### 第一步：类型定义 `types.py`
+### TableRequest
 
-这是整个系统的**数据结构基础**，定义了 6 个核心数据类：
+`TableRequest` 是外部请求，表示用户想生成什么样的表格。
 
-```python
-@dataclass
-class TableRequest:
-    """用户请求 - 定义想要什么样的表格"""
-    domain: str = "telecommunications"  # 领域：电信/金融/通用
-    language: str = "zh"                # 语言
-    min_rows: int = 4                   # 最小行数
-    max_rows: int = 12                  # 最大行数
-    min_cols: int = 3                   # 最小列数
-    max_cols: int = 8                   # 最大列数
-    simple: Optional[bool] = None       # 是否简单表格（无合并单元格）
-    colored: Optional[bool] = None      # 是否带颜色
-    lined: Optional[bool] = None        # 是否有边框线
+关键字段：
+
+```text
+domain      领域，默认 telecommunications
+language    语言，默认 zh
+min_rows    最小行数
+max_rows    最大行数
+min_cols    最小列数
+max_cols    最大列数
+simple      是否简单表格，None 表示随机
+colored     是否带颜色，None 表示随机
+lined       是否完整线框，None 表示随机
+config_id   8 路配置 ID 或 manual
 ```
 
-```python
-@dataclass
-class TablePlan:
-    """主题规划 - TopicAgent 的输出"""
-    domain: str        # 领域
-    language: str      # 语言
-    topic: str         # 具体主题（如"5G基站月度维护统计"）
-    rows: int          # 确定的行数
-    cols: int          # 确定的列数
-    simple: bool       # 是否简单表格
-    colored: bool      # 是否带颜色
-    lined: bool        # 是否有边框
+### TablePlan
+
+`TablePlan` 是 `TopicAgent` 的输出。它把随机或用户指定的约束具体化。
+
+关键字段：
+
+```text
+domain
+language
+topic
+rows
+cols
+simple
+colored
+lined
+config_id
 ```
 
-```python
-@dataclass
-class Cell:
-    """单元格 - 表格的最小单位"""
-    row: int           # 行位置
-    col: int           # 列位置
-    tag: str = "td"    # HTML 标签（th 或 td）
-    text: str = ""     # 单元格内容
-    rowspan: int = 1   # 行合并数
-    colspan: int = 1   # 列合并数
-    role: str = "body" # 角色：title/header/body
-    cell_id: Optional[int] = None  # 唯一标识
+### Cell
+
+`Cell` 是结构生成阶段的最小单元。
+
+关键字段：
+
+```text
+row       起始行
+col       起始列
+tag       th 或 td
+text      单元格文本
+rowspan   跨行数
+colspan   跨列数
+role      title / header / body
+cell_id   与 HTML id 对齐的内部编号
 ```
 
-```python
-@dataclass
-class TableSchema:
-    """表格结构 - SchemaAgent 的输出"""
-    rows: int
-    cols: int
-    cells: List[Cell] = field(default_factory=list)  # 所有单元格列表
+### TableSchema
+
+`TableSchema` 是表格逻辑结构。
+
+关键字段：
+
+```text
+rows
+cols
+cells
+header_type
+has_rowspan
+has_colspan
 ```
 
-```python
-@dataclass
-class TableStyle:
-    """表格样式 - StyleAgent 的输出"""
-    name: str          # 样式名称（如 "agent_simple_colored_lined"）
-    table_css: str     # 表格整体 CSS
-    cell_css: str      # 普通单元格 CSS
-    header_css: str    # 表头单元格 CSS
+`header_type` 目前可能取值：
+
+```text
+simple_single_header
+title_header
+grouped_columns
+left_headers
+body_rowspan
+mixed_headers
 ```
 
-```python
-@dataclass
-class AgentTable:
-    """最终输出 - 包含所有信息"""
-    plan: TablePlan           # 主题规划
-    schema: TableSchema       # 表格结构
-    style: TableStyle         # 样式
-    html: str                 # 完整 HTML 字符串
-    structure_tokens: List[str]  # 结构标记（用于标注）
-    id_count: int             # 单元格总数
+### TableStyle
+
+`TableStyle` 保存样式名称和 CSS 片段。
+
+关键字段：
+
+```text
+name
+table_css
+cell_css
+header_css
 ```
 
-**数据流：**
-```markdown
-TableRequest → TablePlan → TableSchema + TableStyle → AgentTable
+### AgentTable
+
+`AgentTable` 是 `HtmlBuilder` 的输出，也是 `RendererTool` 的输入。
+
+关键字段：
+
+```text
+plan
+schema
+style
+html
+structure_tokens
+id_count
 ```
 
----
+## 4. CoreAgent 主流程
 
-### 第二步：核心协调器 `core_agent.py`
+`core_agent.py` 中的 `CoreAgent` 负责串联各个 Agent。
 
-```python
-class CoreAgent:
-    """协调所有 Agent 的工作流程"""
-    
-    def __init__(self):
-        # 初始化所有子 Agent
-        self.topic_agent = TopicAgent()
-        self.schema_agent = SchemaAgent()
-        self.header_agent = HeaderAgent()
-        self.body_agent = BodyAgent()
-        self.style_agent = StyleAgent()
-        self.validator_agent = ValidatorAgent()
-        self.filling_checker = FillingChecker()
-        self.html_builder = HtmlBuilder()
+实际流程：
 
-    def generate(self, request: TableRequest):
-        # 按顺序执行流水线
-        plan = self.topic_agent.plan(request)           # 1. 生成主题
-        schema = self.schema_agent.build(plan)           # 2. 构建结构
-        style = self.style_agent.build(plan)             # 3. 生成样式
-        schema = self.header_agent.fill(schema, plan)    # 4. 填充表头
-        schema = self.body_agent.fill(schema, plan)      # 5. 填充表体
-        
-        # 6. 验证结构
-        ok, errors = self.validator_agent.validate(schema)
-        if not ok:
-            raise ValueError("invalid table schema: " + "; ".join(errors))
-        
-        # 7. 验证内容
-        ok, errors = self.filling_checker.check(schema, plan)
-        if not ok:
-            raise ValueError("invalid table filling: " + "; ".join(errors))
-        
-        # 8. 生成 HTML
-        return self.html_builder.build(plan, schema, style)
+```text
+1. TopicAgent.plan(request)
+2. SchemaAgent.build(plan)
+3. StyleAgent.build(plan)
+4. HeaderAgent.fill(schema, plan)
+5. BodyAgent.fill(schema, plan)
+6. ValidatorAgent.validate(schema)
+7. FillingChecker.evaluate(schema, plan)
+8. HtmlBuilder.build(plan, schema, style)
 ```
 
-**关键点：** 这是一个**管道模式**，每个 Agent 处理完后把结果传给下一个。
+如果结构验证失败，会抛出：
 
----
-
-### 第三步：主题生成 `topic_agent.py`
-
-```python
-class TopicAgent:
-    """从预定义主题库中随机选择主题"""
-    
-    TOPICS = {
-        "telecommunications": [
-            "5G基站月度维护统计",
-            "宽带用户增长分析",
-            "通信网络故障处理记录",
-            "套餐收入与用户规模对比",
-            "区域网络覆盖质量评估",
-        ],
-        "finance": [
-            "季度营收与成本分析",
-            "部门预算执行情况",
-            "资产负债摘要",
-        ],
-        "general": [
-            "项目进度统计",
-            "设备巡检记录",
-            "业务指标汇总",
-        ],
-    }
-
-    def plan(self, request: TableRequest) -> TablePlan:
-        # 根据领域选择主题列表
-        topics = self.TOPICS.get(request.domain, self.TOPICS["general"])
-        
-        # 随机确定行列数（在用户指定范围内）
-        rows = random.randint(request.min_rows, request.max_rows)
-        cols = random.randint(request.min_cols, request.max_cols)
-        
-        # 随机决定样式属性（如果用户没指定）
-        simple = request.simple if request.simple is not None else random.random() < 0.55
-        colored = request.colored if request.colored is not None else random.random() < 0.4
-        lined = request.lined if request.lined is not None else random.random() < 0.7
-        
-        return TablePlan(
-            domain=request.domain,
-            language=request.language,
-            topic=random.choice(topics),  # 随机选一个主题
-            rows=rows,
-            cols=cols,
-            simple=simple,
-            colored=colored,
-            lined=lined,
-        )
+```text
+invalid table schema
 ```
 
-**作用：** 把用户的模糊请求（"给我一个电信表格"）转化为具体的计划。
+如果填充质量失败，会抛出：
 
----
-
-### 第四步：结构构建 `schema_agent.py`
-
-```python
-class SchemaAgent:
-    """根据计划构建表格的单元格布局"""
-    
-    def build(self, plan: TablePlan) -> TableSchema:
-        cells = []
-        
-        if plan.simple:
-            # 简单表格：第一行是表头，其余是表体
-            for row in range(plan.rows):
-                for col in range(plan.cols):
-                    role = "header" if row == 0 else "body"
-                    tag = "th" if role == "header" else "td"
-                    cells.append(Cell(row=row, col=col, tag=tag, role=role))
-        else:
-            # 复杂表格：第一行是标题（跨所有列），第二行是表头
-            cells.append(Cell(
-                row=0, col=0,
-                tag="th",
-                role="title",      # 标题行
-                colspan=plan.cols,  # 合并所有列
-            ))
-            for row in range(1, plan.rows):
-                for col in range(plan.cols):
-                    role = "header" if row == 1 else "body"
-                    tag = "th" if role == "header" else "td"
-                    cells.append(Cell(row=row, col=col, tag=tag, role=role))
-        
-        # 给每个单元格分配唯一 ID
-        for idx, cell in enumerate(cells):
-            cell.cell_id = idx
-        
-        return TableSchema(rows=plan.rows, cols=plan.cols, cells=cells)
+```text
+invalid table filling
 ```
 
-**两种表格类型：**
+这些错误会被 `run_agents.py` 的批量入口分类统计。
 
-- **简单表格（simple=True）：**
-  ```
-  | 表头1 | 表头2 | 表头3 |   ← row=0, role=header
-  | 数据  | 数据  | 数据  |   ← row=1, role=body
-  | 数据  | 数据  | 数据  |   ← row=2, role=body
-  ```
+## 5. Planner Agents
 
-- **复杂表格（simple=False）：**
-  ```
-  |      标题（colspan=3）    |   ← row=0, role=title
-  | 表头1 | 表头2 | 表头3 |   ← row=1, role=header
-  | 数据  | 数据  | 数据  |   ← row=2, role=body
-  ```
+### TopicAgent
 
----
+文件：
 
-### 第五步：样式生成 `style_agent.py`
-
-```python
-class StyleAgent:
-    """根据计划生成 CSS 样式"""
-    
-    def build(self, plan: TablePlan) -> TableStyle:
-        # 根据是否有边框选择不同的 border 样式
-        border = "border:1px solid #111;" if plan.lined else "border-bottom:1px solid #333;"
-        
-        # 根据是否带颜色设置背景色
-        header_bg = "background:#e8f2ff;" if plan.colored else ""  # 表头蓝色
-        body_bg = "background:#fff7e6;" if plan.colored else ""    # 表体橙色
-        
-        return TableStyle(
-            name=self._style_name(plan),  # 如 "agent_simple_colored_lined"
-            table_css="border-collapse:collapse;text-align:center;background:white;",
-            cell_css=f"padding:6px 14px;word-break:break-all;{border}{body_bg}",
-            header_css=f"padding:7px 16px;font-weight:bold;{border}{header_bg}",
-        )
-    
-    def _style_name(self, plan: TablePlan) -> str:
-        # 生成描述性名称
-        parts = ["agent"]
-        parts.append("simple" if plan.simple else "complex")
-        parts.append("colored" if plan.colored else "plain")
-        parts.append("lined" if plan.lined else "lineless")
-        return "_".join(parts)  # 如 "agent_simple_colored_lined"
+```text
+sub_agents/planners/topic_agent.py
 ```
 
-**作用：** 控制表格的视觉外观。
+职责：
 
----
+- 选择领域主题。
+- 随机或按请求确定行列数。
+- 随机或按请求确定 simple / colored / lined。
+- 传递 `config_id`。
+- 可选调用 LLM 生成主题。
+- 用 `used_topics` 做简单主题去重。
 
-### 第六步：表头填充 `header_agent.py`
+规则主题库目前覆盖：
 
-```python
-class HeaderAgent:
-    """用领域相关的标签填充表头"""
-    
-    HEADERS = {
-        "telecommunications": [
-            "区域", "站点数", "用户数", "故障数", 
-            "完成率", "收入", "同比", "备注",
-        ],
-        "finance": [
-            "部门", "预算", "支出", "收入", 
-            "利润", "同比", "状态", "备注",
-        ],
-        "general": [
-            "项目", "负责人", "数量", "进度", 
-            "状态", "评分", "日期", "备注",
-        ],
-    }
-
-    def fill(self, schema: TableSchema, plan: TablePlan) -> TableSchema:
-        headers = self.HEADERS.get(plan.domain, self.HEADERS["general"])
-        
-        for cell in schema.cells:
-            if cell.role == "title":
-                cell.text = plan.topic  # 标题单元格填主题
-            elif cell.role == "header":
-                # 表头单元格从预定义列表中循环取
-                cell.text = headers[cell.col % len(headers)]
-        
-        return schema
+```text
+telecommunications
+finance
+general
 ```
 
-**示例：** 如果是电信领域，3 列表格的表头会是：`["区域", "站点数", "用户数"]`
+### SchemaAgent
 
----
+文件：
 
-### 第七步：表体填充 `body_agent.py`
-
-```python
-class BodyAgent:
-    """根据表头语义填充合理的数据"""
-    
-    REGIONS = ["东区", "西区", "南区", "北区", "中心区", "新区"]
-    STATUS = ["正常", "待优化", "已完成", "跟进中", "需复核"]
-    PEOPLE = ["张工", "李工", "王工", "赵工", "陈工"]
-
-    def fill(self, schema: TableSchema, plan: TablePlan) -> TableSchema:
-        headers = self._headers_by_col(schema)  # 获取每列的表头名
-        
-        for cell in schema.cells:
-            if cell.role != "body":
-                continue
-            
-            header = headers.get(cell.col, "")
-            
-            # 根据表头关键词智能填充
-            if any(keyword in header for keyword in ("区域", "部门", "项目")):
-                cell.text = random.choice(self.REGIONS)  # 随机区域名
-            elif any(keyword in header for keyword in ("站点数", "用户数", "数量", "预算", "支出", "收入", "利润")):
-                cell.text = str(random.randint(10, 999))  # 随机数字
-            elif any(keyword in header for keyword in ("完成率", "同比", "进度", "评分")):
-                cell.text = "{:.1f}%".format(random.uniform(70, 99.9))  # 百分比
-            elif any(keyword in header for keyword in ("负责人",)):
-                cell.text = random.choice(self.PEOPLE)  # 随机人名
-            elif any(keyword in header for keyword in ("状态", "备注")):
-                cell.text = random.choice(self.STATUS)  # 随机状态
-            else:
-                cell.text = self._fallback_value(cell.col)  # 兜底值
-        
-        return schema
-    
-    def _headers_by_col(self, schema: TableSchema):
-        """构建 {列号: 表头名} 的映射"""
-        headers = {}
-        for cell in schema.cells:
-            if cell.role == "header":
-                for col in range(cell.col, cell.col + cell.colspan):
-                    headers[col] = cell.text
-        return headers
-    
-    def _fallback_value(self, col: int) -> str:
-        """兜底值生成"""
-        if col == 0:
-            return random.choice(self.REGIONS)
-        if col in (1, 2, 3):
-            return str(random.randint(10, 999))
-        return random.choice(self.STATUS)
+```text
+sub_agents/planners/schema_agent.py
 ```
 
-**核心逻辑：** 通过**表头关键词匹配**来决定填什么类型的数据。比如看到"完成率"就填百分比，看到"区域"就填地名。
+职责：
 
----
+- 生成 `TableSchema`。
+- 分配 cell 的 row / col / rowspan / colspan。
+- 分配 tag 和 role。
+- 分配 cell_id。
+- 生成结构摘要字段。
 
-### 第八步：结构验证 `validator_agent.py`
+simple 表格：
 
-```python
-class ValidatorAgent:
-    """验证表格结构的合法性"""
-    
-    def validate(self, schema: TableSchema):
-        occupied = set()  # 已占用的位置
-        errors = []
-        
-        for cell in schema.cells:
-            # 检查1：位置不能为负
-            if cell.row < 0 or cell.col < 0:
-                errors.append(f"negative cell position at ({cell.row}, {cell.col})")
-                continue
-            
-            # 检查2：不能超出表格边界
-            if cell.row + cell.rowspan > schema.rows or cell.col + cell.colspan > schema.cols:
-                errors.append(f"span out of range at ({cell.row}, {cell.col})")
-                continue
-            
-            # 检查3：不能有重叠
-            for row in range(cell.row, cell.row + cell.rowspan):
-                for col in range(cell.col, cell.col + cell.colspan):
-                    key = (row, col)
-                    if key in occupied:
-                        errors.append(f"overlapped cell at {key}")
-                    occupied.add(key)
-        
-        # 检查4：每行必须填满
-        for row in range(schema.rows):
-            row_cells = [key for key in occupied if key[0] == row]
-            if len(row_cells) != schema.cols:
-                errors.append(f"row {row} covers {len(row_cells)} cells, expected {schema.cols}")
-        
-        return len(errors) == 0, errors
+```text
+第一行是 header
+其余行是 body
+无 rowspan / colspan
 ```
 
-**验证内容：**
-1. 位置合法性（不能有负数）
-2. 边界检查（不能超出表格）
-3. 重叠检查（合并单元格不能重叠）
-4. 完整性检查（每行必须填满）
+complex 表格目前包含：
 
----
-
-### 第九步：内容验证 `filling_checker.py`
-
-`FillingChecker` 现在不只是返回 `True / False`，而是先生成一份 `FillingCheckReport`，里面包含：
-
-- `score`：整体填充质量分
-- `title_score`：标题和主题的匹配分
-- `header_score`：表头质量分
-- `body_score`：表体质量分
-- `errors`：硬错误
-- `warnings`：软警告
-- `column_scores`：列级别评分
-
-它仍然保留 `check()`，所以旧调用方式不变；只是内部先走 `evaluate()`，再决定是否通过。
-
-**作用：** 不仅检查“有没有错”，还给出“哪里弱、弱到什么程度”，更接近论文里“排序型检查器”的思路。
-
----
-
-### 第十步：HTML 构建 `html_builder.py`
-
-```python
-class HtmlBuilder:
-    """将所有信息组装成最终的 HTML"""
-    
-    def build(self, plan: TablePlan, schema: TableSchema, style: TableStyle) -> AgentTable:
-        html = ["<html>", self._style(style), "<body><table>"]
-        structure = []  # 用于标注的结构标记
-        id_count = 0
-        
-        # 按行分组
-        cells_by_row = {}
-        for cell in schema.cells:
-            cells_by_row.setdefault(cell.row, []).append(cell)
-        
-        # 逐行生成 HTML
-        for row in range(schema.rows):
-            html.append("<tr>")
-            structure.append("<tr>")
-            
-            for cell in sorted(cells_by_row.get(row, []), key=lambda item: item.col):
-                attrs = [f"id={id_count}"]
-                if cell.rowspan > 1:
-                    attrs.append(f'rowspan="{cell.rowspan}"')
-                if cell.colspan > 1:
-                    attrs.append(f'colspan="{cell.colspan}"')
-                
-                tag = cell.tag
-                html.append(f"<{tag} {' '.join(attrs)}>{escape(cell.text)}</{tag}>")
-                self._append_structure(structure, cell)
-                id_count += 1
-            
-            html.append("</tr>")
-            structure.append("</tr>")
-        
-        html.append("</table></body></html>")
-        
-        return AgentTable(
-            plan=plan,
-            schema=schema,
-            style=style,
-            html="".join(html),           # 完整 HTML
-            structure_tokens=structure,    # 结构标记
-            id_count=id_count,            # 单元格数量
-        )
-    
-    def _style(self, style: TableStyle) -> str:
-        """生成 <head> 标签和 CSS"""
-        return (
-            '<head><meta charset="UTF-8"><style>'
-            f"html{{background-color:white;}}"
-            f"table{{{style.table_css}}}"
-            f"td{{{style.cell_css}}}"
-            f"th{{{style.header_css}}}"
-            "</style></head>"
-        )
-    
-    def _append_structure(self, structure, cell):
-        """添加结构标记（用于后续标注）"""
-        if cell.rowspan > 1 or cell.colspan > 1:
-            structure.append("<td")
-            if cell.rowspan > 1:
-                structure.append(f' rowspan="{cell.rowspan}"')
-            if cell.colspan > 1:
-                structure.append(f' colspan="{cell.colspan}"')
-            structure.append(">")
-        else:
-            structure.append("<td>")
-        structure.append("</td>")
+```text
+title_header       标题行 colspan
+grouped_columns    分组列头
+left_headers       左侧行表头
+body_rowspan       表体第一列跨行
+mixed_headers      标题 + 分组列头 + 左侧表头
 ```
 
-**输出示例：**
-```html
-<html>
-<head><meta charset="UTF-8"><style>...</style></head>
-<body><table>
-<tr><th id=0 colspan="3">5G基站月度维护统计</th></tr>
-<tr><th id=1>区域</th><th id=2>站点数</th><th id=3>用户数</th></tr>
-<tr><td id=4>东区</td><td id=5>156</td><td id=6>89.5%</td></tr>
-</table></body></html>
+注意：`_title_header()` 目前只在行列过小时作为 fallback，正常 complex 随机选择其他四类。
+
+### StyleAgent
+
+文件：
+
+```text
+sub_agents/planners/style_agent.py
 ```
 
----
+职责：
 
-### 第十一步：渲染工具 `renderer_tool.py`
+- 根据 `plan.colored` 决定表头和表体背景。
+- 根据 `plan.lined` 决定线型。
+- 生成 `TableStyle.name`，用于文件名前缀和 metadata。
 
-```python
-class RendererTool:
-    """使用 Selenium 渲染 HTML 为图片，并生成标注文件"""
-    
-    def __init__(self, output, ch_dict_path="dict/ch_news.txt", en_dict_path="dict/en_corpus.txt", 
-                 brower="chrome", chrome_driver_path=None, brower_width=1920, brower_height=2440):
-        self.output = output
-        self.generator = GenerateTable(
-            output=output,
-            ch_dict_path=ch_dict_path,
-            en_dict_path=en_dict_path,
-            brower=brower,
-            brower_width=brower_width,
-            brower_height=brower_height,
-            chrome_driver_path=chrome_driver_path,
-        )
+当前 line style 包括：
 
-    def render_many(self, tables):
-        """批量渲染多个表格"""
-        # 创建输出目录
-        os.makedirs(self.output, exist_ok=True)
-        os.makedirs(os.path.join(self.output, "html"), exist_ok=True)
-        os.makedirs(os.path.join(self.output, "img"), exist_ok=True)
-        
-        # 打开标注文件
-        gt_path = os.path.join(self.output, "gt.txt")
-        meta_path = os.path.join(self.output, "meta.jsonl")
-        
-        with open(gt_path, "w", encoding="utf-8") as f_gt, open(meta_path, "w", encoding="utf-8") as f_meta:
-            for idx, table in enumerate(tables):
-                self.render_one(table, idx, f_gt, f_meta)
-
-    def render_one(self, table, idx, f_gt, f_meta):
-        """渲染单个表格"""
-        border = table.style.name
-        
-        # 1. 渲染 HTML 为图片
-        im, html, structure, contents, _ = self.generator.render_table(
-            table.html,
-            table.structure_tokens,
-            table.id_count,
-            border,
-        )
-        
-        # 2. 生成文件名
-        name = self._name(border, idx)
-        
-        # 3. 保存 HTML 文件
-        html_save_path = os.path.join(self.output, "html", name + ".html")
-        with open(html_save_path, "w", encoding="utf-8") as f:
-            f.write(html)
-        
-        # 4. 保存图片（600 DPI）
-        img_save_path = os.path.join(self.output, "img", name + ".jpg")
-        im.save(img_save_path, dpi=(600, 600))
-        
-        # 5. 生成 PP-Structure 标注
-        img_file_name = os.path.join("img", name + ".jpg")
-        label_info = self.generator.make_ppstructure_label(
-            structure,
-            contents,
-            img_file_name,
-        )
-        f_gt.write(json.dumps(label_info, ensure_ascii=False) + "\n")
-        
-        # 6. 生成元数据
-        f_meta.write(
-            json.dumps(
-                {
-                    "filename": img_file_name,
-                    "source": "agent_generated",
-                    "domain": table.plan.domain,
-                    "topic": table.plan.topic,
-                    "rows": table.plan.rows,
-                    "cols": table.plan.cols,
-                    "simple": table.plan.simple,
-                    "colored": table.plan.colored,
-                    "lined": table.plan.lined,
-                    "style": table.style.name,
-                },
-                ensure_ascii=False,
-            ) + "\n")
-
-    def close(self):
-        """关闭浏览器"""
-        self.generator.close()
-
-    def _name(self, border, idx):
-        """生成唯一文件名"""
-        suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=12))
-        return f"{border}_{idx}_{suffix}"
+```text
+full
+horizontal
+vertical
+header
+none
+light_horizontal
 ```
 
-**输出目录结构：**
-```
-output/
-├── html/           # HTML 文件
-│   ├── agent_simple_colored_lined_0_ABC123.html
-│   └── ...
-├── img/            # 渲染的图片
-│   ├── agent_simple_colored_lined_0_ABC123.jpg
-│   └── ...
-├── gt.txt          # PP-Structure 标注（每行一个 JSON）
-└── meta.jsonl      # 元数据（每行一个 JSON）
-```
+`RendererTool` 会根据 style name 推导 `line_type`。
 
----
+## 6. Filler Agents
 
-### 第十二步：运行入口 `run_agents.py`
+### HeaderAgent
 
-```python
-import argparse
-import sys
-from pathlib import Path
+文件：
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from agents.core_agent import CoreAgent
-from agents.tools.rendering.renderer_tool import RendererTool
-from agents.types import TableRequest
-
-
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--num", type=int, default=1)
-    parser.add_argument("--output", type=str, default="output/agent_table")
-    parser.add_argument("--domain", type=str, default="telecommunications")
-    parser.add_argument("--language", type=str, default="zh")
-    parser.add_argument("--min_row", type=int, default=4)
-    parser.add_argument("--max_row", type=int, default=12)
-    parser.add_argument("--min_col", type=int, default=3)
-    parser.add_argument("--max_col", type=int, default=8)
-    parser.add_argument("--brower", type=str, default="chrome")
-    parser.add_argument("--brower_width", type=int, default=1920)
-    parser.add_argument("--brower_height", type=int, default=2440)
-    parser.add_argument("--chrome_driver_path", type=str, default=None)
-    return parser.parse_args()
-
-
-def find_default_chromedriver():
-    """查找默认的 ChromeDriver 路径"""
-    for candidate in [
-            Path("chromedriver-win64/chromedriver.exe"),
-            Path("../chromedriver-win64/chromedriver.exe")]:
-        if candidate.exists():
-            return str(candidate)
-    return None
-
-
-def main():
-    """主函数"""
-    args = parse_args()
-    
-    # 自动查找 ChromeDriver
-    if args.brower == "chrome" and args.chrome_driver_path is None:
-        args.chrome_driver_path = find_default_chromedriver()
-    
-    # 1. 创建请求
-    request = TableRequest(
-        domain=args.domain,
-        language=args.language,
-        min_rows=args.min_row,
-        max_rows=args.max_row,
-        min_cols=args.min_col,
-        max_cols=args.max_col,
-    )
-    
-    # 2. 生成表格
-    core = CoreAgent()
-    tables = [core.generate(request) for _ in range(args.num)]
-    
-    # 3. 渲染输出
-    renderer = RendererTool(
-        output=args.output,
-        brower=args.brower,
-        brower_width=args.brower_width,
-        brower_height=args.brower_height,
-        chrome_driver_path=args.chrome_driver_path,
-    )
-    try:
-        renderer.render_many(tables)
-    finally:
-        renderer.close()
-    
-    print(f"generated {args.num} agent tables into {args.output}")
-
-
-if __name__ == "__main__":
-    main()
+```text
+sub_agents/fillers/header_agent.py
 ```
 
-**使用方式：**
+职责：
+
+- 填充 title。
+- 填充 column header。
+- 填充 grouped header。
+- 填充 row header。
+- 可选调用 LLM 生成 headers / group_headers / row_headers。
+
+默认领域模板包括：
+
+```text
+telecommunications
+finance
+general
+```
+
+### BodyAgent
+
+文件：
+
+```text
+sub_agents/fillers/body_agent.py
+```
+
+职责：
+
+- 根据列头语义填充 body。
+- 支持区域、数字、百分比、负责人、状态等字段。
+- 可选调用 LLM 生成表体。
+- 对 LLM 返回值做轻量归一化。
+
+当前规则示例：
+
+```text
+包含 “率 / 同比 / 进度” 的列 -> 百分比
+包含 “站点数 / 用户数 / 收入” 的列 -> 数字
+包含 “负责人” 的列 -> 人名
+包含 “状态 / 备注” 的列 -> 状态文本
+```
+
+## 7. Validators
+
+### ValidatorAgent
+
+文件：
+
+```text
+sub_agents/validators/validator_agent.py
+```
+
+职责：
+
+- 构建 coverage matrix。
+- 检查负坐标。
+- 检查 rowspan / colspan 是否小于 1。
+- 检查 span 是否越界。
+- 检查单元格是否重叠。
+- 检查每行是否完整覆盖。
+
+这是结构稳定性的核心，论文中对应 structure validator / matrix representation。
+
+### FillingChecker
+
+文件：
+
+```text
+sub_agents/validators/filling_checker.py
+```
+
+职责：
+
+- 对填充质量打分。
+- 检查标题是否和 topic 对齐。
+- 检查 header 是否为空或重复。
+- 检查 body 是否符合列头预期类型。
+- 输出 `FillingCheckReport`。
+
+报告字段：
+
+```text
+ok
+score
+title_score
+header_score
+body_score
+errors
+warnings
+column_scores
+cell_scores
+```
+
+当前是规则评分版，还没有做到论文里的 LLM ranking / 人类排序相关性实验。
+
+## 8. Rendering Tools
+
+### HtmlBuilder
+
+文件：
+
+```text
+tools/rendering/html_builder.py
+```
+
+职责：
+
+- 将 `TableSchema` 和 `TableStyle` 转成完整 HTML。
+- 给每个 cell 写入递增 id。
+- 生成 PP-Structure 风格的 `structure_tokens`。
+- 返回 `AgentTable`。
+
+注意：HTML id 的顺序和 `cell_id` 顺序一致，这让后续 bbox 可以回连到 schema cell。
+
+### RendererTool
+
+文件：
+
+```text
+tools/rendering/renderer_tool.py
+```
+
+职责：
+
+- 调用原始 `TableGeneration.GenerateTable` 的 Selenium 渲染能力。
+- 保存 HTML。
+- 保存 JPG。
+- 输出 `gt.txt`。
+- 输出 `meta.jsonl`。
+- 输出 `cells.jsonl`。
+
+输出目录结构：
+
+```text
+output_xxx/
+├─ html/
+│  └─ *.html
+├─ img/
+│  └─ *.jpg
+├─ gt.txt
+├─ meta.jsonl
+├─ cells.jsonl
+├─ report.json
+└─ report.md
+```
+
+`gt.txt` 是 PP-Structure 风格标注，每行一张图。
+
+`meta.jsonl` 是样本级 metadata，关键字段包括：
+
+```text
+filename
+source
+domain
+language
+config_id
+topic
+rows
+cols
+simple
+colored
+lined
+style
+line_type
+header_type
+has_rowspan
+has_colspan
+```
+
+`cells.jsonl` 是 cell-level 标注，每行一张图，关键字段包括：
+
+```text
+filename
+config_id
+header_type
+rows
+cols
+cell_count
+cells
+```
+
+每个 cell 包含：
+
+```text
+cell_id
+row
+col
+rowspan
+colspan
+tag
+role
+text
+tokens
+bbox
+is_header
+is_empty
+```
+
+当前 role 映射：
+
+```text
+title
+column_header
+row_header
+body
+```
+
+## 9. LLM Adapter
+
+文件：
+
+```text
+tools/adapters/llm_topic_client.py
+tools/adapters/llm_header_client.py
+tools/adapters/llm_body_client.py
+```
+
+职责：
+
+- 提供 OpenAI-compatible API 调用。
+- 支持 api_key / base_url / model / system_prompt。
+- Topic / Header / Body 均可独立启用。
+
+如果不启用 LLM，系统走规则 fallback。
+
+推荐在：
+
+```text
+TableGeneration/agents/.env
+```
+
+中配置本地密钥和模型地址。该文件不应提交。
+
+## 10. run_agents.py 批量入口
+
+文件：
+
+```text
+run_agents.py
+```
+
+这是当前最重要的命令行入口。
+
+### 基础参数
+
+```text
+--num
+--target_num
+--max_attempts
+--retry_failed
+--report
+--output
+--domain
+--language
+--min_row
+--max_row
+--min_col
+--max_col
+```
+
+### 表格属性参数
+
+```text
+--simple
+--complex
+--colored / --no-colored
+--lined / --no-lined
+--balanced_configs
+```
+
+`--simple` 和 `--complex` 互斥。
+
+### 浏览器参数
+
+```text
+--brower
+--brower_width
+--brower_height
+--chrome_driver_path
+```
+
+注意：参数名沿用了原项目拼写 `brower`。
+
+### LLM 参数
+
+```text
+--use_llm_topic
+--llm_topic_api_key
+--llm_topic_base_url
+--llm_topic_model
+--llm_topic_system_prompt
+
+--use_llm_header
+--llm_header_api_key
+--llm_header_base_url
+--llm_header_model
+--llm_header_system_prompt
+
+--use_llm_body
+--llm_body_api_key
+--llm_body_base_url
+--llm_body_model
+--llm_body_system_prompt
+```
+
+## 11. 8 路 Balanced Config
+
+`run_agents.py` 中固定定义了 8 路配置：
+
+```text
+simple_colored_lined
+simple_colored_unlined
+simple_plain_lined
+simple_plain_unlined
+complex_colored_lined
+complex_colored_unlined
+complex_plain_lined
+complex_plain_unlined
+```
+
+每一项对应：
+
+```text
+config_id, simple, colored, lined
+```
+
+当传入：
+
 ```bash
-# 生成 10 个电信领域表格
-python run_agents.py --num 10 --domain telecommunications --output output/my_tables
-
-# 生成 5 个金融领域表格，指定行列范围
-python run_agents.py --num 5 --domain finance --min_row 6 --max_row 10 --min_col 4 --max_col 6
-
-# 使用自定义 ChromeDriver
-python run_agents.py --num 1 --chrome_driver_path /path/to/chromedriver
+python agents/run_agents.py --target_num 80 --balanced_configs
 ```
 
----
+系统会按 8 路轮询生成，理想情况下每种配置 10 张。
 
-## 🎯 Agent 职责总结表
+## 12. 失败重试与报告
 
-| Agent | 输入 | 输出 | 职责 |
-|-------|------|------|------|
-| **TopicAgent** | TableRequest | TablePlan | 确定主题和表格属性 |
-| **SchemaAgent** | TablePlan | TableSchema | 构建单元格布局 |
-| **StyleAgent** | TablePlan | TableStyle | 生成 CSS 样式 |
-| **HeaderAgent** | TableSchema + TablePlan | TableSchema | 填充表头文本 |
-| **BodyAgent** | TableSchema + TablePlan | TableSchema | 填充表体数据 |
-| **ValidatorAgent** | TableSchema | (bool, errors) | 验证结构合法性 |
-| **FillingChecker** | TableSchema + TablePlan | FillingCheckReport / (bool, errors) | 验证内容合理性与质量评分 |
-| **HtmlBuilder** | 全部 | AgentTable | 组装最终 HTML |
-| **RendererTool** | AgentTable | 图片 + 标注 | 渲染和保存 |
+`run_agents.py` 当前支持目标数量生成。
 
----
+示例：
 
-## 🏗️ 设计亮点
-
-1. **模块化设计**：每个 Agent 职责单一，易于维护和扩展
-2. **可扩展性**：添加新领域只需修改主题和表头字典
-3. **双重验证**：结构验证 + 内容验证确保输出质量
-4. **随机性**：每次生成都不同，增加数据集多样性
-5. **标注支持**：自动生成 PP-Structure 格式的标注文件
-6. **批量处理**：支持一次性生成多个表格
-
----
-
-## 📊 数据流图
-
+```powershell
+python agents\run_agents.py ^
+  --target_num 8 ^
+  --balanced_configs ^
+  --retry_failed ^
+  --max_attempts 24 ^
+  --report ^
+  --output ..\output\retry_report_smoke ^
+  --chrome_driver_path ..\chromedriver-win64\chromedriver.exe
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      TableRequest                           │
-│  (domain, language, rows, cols, simple, colored, lined)     │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                      TopicAgent.plan()                      │
-│  - 从预定义主题库随机选择                                      │
-│  - 确定行列数（在指定范围内随机）                                │
-│  - 确定样式属性                                               │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                       TablePlan                             │
-│  (domain, language, topic, rows, cols, simple, colored, lined)│
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-              ┌─────────────┴─────────────┐
-              ↓                           ↓
-┌─────────────────────────┐   ┌─────────────────────────┐
-│   SchemaAgent.build()   │   │    StyleAgent.build()   │
-│  - 构建单元格列表        │   │  - 生成 CSS 样式        │
-│  - 分配 role 和 tag     │   │  - 根据属性组合样式      │
-└─────────────────────────┘   └─────────────────────────┘
-              ↓                           ↓
-┌─────────────────────────┐   ┌─────────────────────────┐
-│      TableSchema        │   │       TableStyle        │
-│  (rows, cols, cells)    │   │  (name, table_css, ...) │
-└─────────────────────────┘   └─────────────────────────┘
-              ↓
-┌─────────────────────────────────────────────────────────────┐
-│                   HeaderAgent.fill()                        │
-│  - 填充 title 单元格（主题）                                  │
-│  - 填充 header 单元格（领域相关标签）                          │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                    BodyAgent.fill()                         │
-│  - 根据表头关键词匹配填充数据                                  │
-│  - 区域名、数字、百分比、人名、状态                             │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                ValidatorAgent.validate()                    │
-│  ✓ 位置合法性  ✓ 边界检查  ✓ 重叠检查  ✓ 完整性检查            │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              FillingChecker.evaluate()/check()              │
-│  ✓ 标题匹配  ✓ 头部质量  ✓ 表体一致性  ✓ 评分/警告输出        │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                   HtmlBuilder.build()                       │
-│  - 组装完整 HTML                                            │
-│  - 生成结构标记（用于标注）                                    │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                       AgentTable                            │
-│  (plan, schema, style, html, structure_tokens, id_count)    │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                   RendererTool.render_many()                │
-│  - Selenium 渲染 HTML → 图片                                 │
-│  - 保存 HTML、图片、标注文件                                   │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                      输出文件                                │
-│  ├── html/*.html      # HTML 源文件                          │
-│  ├── img/*.jpg        # 渲染的表格图片                        │
-│  ├── gt.txt           # PP-Structure 标注                    │
-│  └── meta.jsonl       # 元数据                               │
-└─────────────────────────────────────────────────────────────┘
+
+行为：
+
+- `target_num` 表示目标合格样本数。
+- `max_attempts` 表示最多尝试次数。
+- `retry_failed` 表示失败后继续尝试。
+- `report` 表示写出报告。
+
+如果未传 `--target_num`，目标数默认等于 `--num`，因此旧命令仍可使用。
+
+失败分类：
+
+```text
+schema_invalid
+filling_low_score
+render_failed
+generation_failed
 ```
+
+`report.json` / `report.md` 包含：
+
+```text
+target_num
+max_attempts
+retry_failed
+attempts
+success
+failed
+success_rate
+complete
+failure_counts
+config_counts
+header_type_counts
+span_counts
+failures
+```
+
+## 13. 常用命令
+
+进入项目代码目录：
+
+```powershell
+cd TableGeneration
+```
+
+生成 1 张规则表：
+
+```powershell
+python agents\run_agents.py --num 1 --output output\agent_table
+```
+
+强制生成 complex 表：
+
+```powershell
+python agents\run_agents.py --target_num 8 --complex --retry_failed --report --output output\complex_smoke
+```
+
+8 路均衡生成：
+
+```powershell
+python agents\run_agents.py --target_num 16 --balanced_configs --retry_failed --report --output output\balanced_smoke
+```
+
+使用根目录 ChromeDriver：
+
+```powershell
+python agents\run_agents.py --target_num 8 --balanced_configs --retry_failed --report --output ..\output\smoke --chrome_driver_path ..\chromedriver-win64\chromedriver.exe
+```
+
+启用 LLM：
+
+```powershell
+python agents\run_agents.py --target_num 8 --balanced_configs --use_llm_topic --use_llm_header --use_llm_body
+```
+
+## 14. 测试
+
+测试文件位于：
+
+```text
+TableGeneration/tests/
+```
+
+当前测试覆盖：
+
+- balanced config 是否均匀轮询。
+- target_num / max_attempts 逻辑。
+- report 统计逻辑。
+- ValidatorAgent 结构验证。
+- cell-level annotation 字段。
+
+运行测试：
+
+```powershell
+cd TableGeneration
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+当前期望结果：
+
+```text
+Ran 10 tests
+OK
+```
+
+## 15. 与论文 TableNet 的对应关系
+
+当前实现和论文机制的对应：
+
+| 论文机制 | 当前实现 | 状态 |
+|---|---|---|
+| Core LLM 编排 | CoreAgent 编排规则/LLM Agent | 基础完成 |
+| Topic LLM | TopicAgent + 可选 LLM | 基础完成 |
+| Header infilling LLM | HeaderAgent + 可选 LLM | 基础完成 |
+| Body infilling LLM | BodyAgent + 可选 LLM | 基础完成 |
+| CSS generator | StyleAgent | 基础完成 |
+| HTML tags generator | SchemaAgent + HtmlBuilder | 基础完成 |
+| Structure validator | ValidatorAgent matrix 检查 | 基础完成 |
+| Fallback constructor | retry loop 粗粒度重试 | 第一版完成 |
+| Selenium renderer | RendererTool | 完成 |
+| 8-way generation | --balanced_configs | mini 版完成 |
+| S annotation | gt.txt / structure_tokens | 部分完成 |
+| C annotation | cells.jsonl | 第一版完成 |
+| H annotation | html + role 字段 | 第一版完成 |
+| V annotation | meta 中 simple/colored/lined/line_type | 部分完成 |
+| Filling checker ranking | FillingChecker 规则评分 | 基础完成 |
+| augmentation | 未实现 | 待做 |
+| structure fidelity experiment | 未实现 | 待做 |
+| active learning TSR | 未实现 | 待做 |
+
+## 16. 当前输出质量基线
+
+最近一次 8 路 smoke 的预期形态：
+
+```text
+html: 8
+img: 8
+gt.txt: 8 行
+meta.jsonl: 8 行
+cells.jsonl: 8 行
+report.json: 1
+report.md: 1
+```
+
+cell-level 标注检查应满足：
+
+```text
+cells.jsonl 行数 == meta.jsonl 行数
+每行 cell_count == len(cells)
+bbox 非法数量 == 0
+role 覆盖 body 和 column_header
+complex 样本中应出现 title / row_header / colspan / rowspan 的一部分
+```
+
+## 17. 后续建议
+
+短期优先级：
+
+1. 完善 `cells.jsonl`，加入更严格的 bbox 与 HTML structure 对齐检查。
+2. 增强 complex 结构分布，例如 multi-level column header、two-axis header、summary row。
+3. 扩展 `StyleAgent`，加入字体、字号、padding、对齐、背景、水印和噪声。
+4. 将 FillingChecker 分数真正接入 retry 策略，例如低分重填而不是整表重建。
+5. 建立 Agent Tool vs LLM Direct 的 mini 版结构保真度实验。
+
+中期目标：
+
+```text
+TableNet-mini Pilot-500
+```
+
+要求：
+
+- 500 张生成成功。
+- 8 路配置尽量均衡。
+- `report.json` 记录成功率和失败类型。
+- `cells.jsonl` 可用于训练/评估前处理。
+- 人工抽查图像、HTML、gt、meta、cells 一致性。
