@@ -180,6 +180,67 @@ chromedriver --version
 fc-list | grep -i "Noto Sans CJK" | head
 ```
 
+如果 `chromedriver --version` 输出类似：
+
+```text
+Command '/usr/bin/chromedriver' requires the chromium snap to be installed.
+Please install it with:
+
+snap install chromium
+```
+
+说明当前命中的 `/usr/bin/chromedriver` 只是 Ubuntu 的 snap 占位命令，不是真正可用的 ChromeDriver。DSW / 容器环境里通常不推荐走 snap，改用 Google Chrome + Chrome for Testing 的 chromedriver。
+
+先安装 Google Chrome 和字体：
+
+```bash
+cd /mnt/systemdisk
+
+wget -O google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt-get update
+sudo apt-get install -y ./google-chrome.deb unzip fonts-noto-cjk fonts-wqy-zenhei
+
+google-chrome --version
+```
+
+再下载与 Chrome 主版本匹配的 chromedriver：
+
+```bash
+CHROME_MAJOR=$(google-chrome --version | grep -oP '[0-9]+' | head -1)
+echo "$CHROME_MAJOR"
+
+DRIVER_VERSION=$(wget -qO- https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_MAJOR})
+echo "$DRIVER_VERSION"
+
+wget -O chromedriver.zip https://storage.googleapis.com/chrome-for-testing-public/${DRIVER_VERSION}/linux64/chromedriver-linux64.zip
+unzip -o chromedriver.zip
+sudo mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+sudo chmod +x /usr/local/bin/chromedriver
+```
+
+验证 Chrome 和 ChromeDriver 主版本一致：
+
+```bash
+google-chrome --version
+/usr/local/bin/chromedriver --version
+```
+
+如果 `/usr/local/bin/chromedriver --version` 正常，但直接执行 `chromedriver --version` 仍然命中 snap 占位，先刷新 shell 缓存并让 `/usr/local/bin` 优先：
+
+```bash
+which -a chromedriver
+export PATH=/usr/local/bin:$PATH
+hash -r
+chromedriver --version
+grep -q 'export PATH=/usr/local/bin:$PATH' ~/.bashrc || echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+```
+
+不建议直接删除 `/usr/bin/chromedriver`。后续命令可以显式使用：
+
+```text
+/usr/local/bin/chromedriver
+```
+
 如果 `which chromedriver` 没有输出，后面可以先不传 `--chrome_driver_path`，让 Selenium Manager 尝试自动处理；但更推荐显式找到 chromedriver 路径。
 
 ## 6. 安装 Python 依赖
@@ -237,12 +298,13 @@ python -m unittest discover -s tests -p "test_*.py"
 
 ```bash
 which chromedriver
+/usr/local/bin/chromedriver --version
 ```
 
-假设输出是：
+如果使用上面 Google Chrome + Chrome for Testing 方案，路径通常是：
 
 ```text
-/usr/bin/chromedriver
+/usr/local/bin/chromedriver
 ```
 
 执行：
@@ -263,7 +325,7 @@ python agents/run_agents.py \
   --max_row 8 \
   --min_col 4 \
   --max_col 6 \
-  --chrome_driver_path /usr/bin/chromedriver
+  --chrome_driver_path /usr/local/bin/chromedriver
 ```
 
 如果 chromedriver 路径不同，就替换最后一行。
@@ -342,12 +404,12 @@ python agents/run_agents.py \
   --retry_failed \
   --max_attempts 900 \
   --report \
-  --output /mnt/systemdisk/tablenet/data/tablenet_mini_dsw_smoke_300 \
+  --output /mnt/systemDisk/tablenet/data/tablenet_dsw_smoke_300  \
   --min_row 6 \
   --max_row 8 \
   --min_col 4 \
   --max_col 6 \
-  --chrome_driver_path /usr/bin/chromedriver
+  --chrome_driver_path /usr/local/bin/chromedriver
 ```
 
 检查：
@@ -400,7 +462,7 @@ python agents/run_agents.py \
   --max_row 10 \
   --min_col 4 \
   --max_col 7 \
-  --chrome_driver_path /usr/bin/chromedriver
+  --chrome_driver_path /usr/local/bin/chromedriver
 ```
 
 ## 12. 安装 LLaMA-Factory
@@ -700,7 +762,7 @@ python agents/run_agents.py \
   --max_row 10 \
   --min_col 4 \
   --max_col 7 \
-  --chrome_driver_path /usr/bin/chromedriver
+  --chrome_driver_path /usr/local/bin/chromedriver
 ```
 
 5K：
@@ -721,7 +783,7 @@ python agents/run_agents.py \
   --max_row 10 \
   --min_col 4 \
   --max_col 7 \
-  --chrome_driver_path /usr/bin/chromedriver
+  --chrome_driver_path /usr/local/bin/chromedriver
 ```
 
 10K：
@@ -742,7 +804,7 @@ python agents/run_agents.py \
   --max_row 12 \
   --min_col 4 \
   --max_col 8 \
-  --chrome_driver_path /usr/bin/chromedriver
+  --chrome_driver_path /usr/local/bin/chromedriver
 ```
 
 10K 建议挂 OSS/NAS，不建议只放系统盘。
@@ -830,6 +892,13 @@ sudo apt-get install -y chromium-browser chromium-chromedriver
 ```bash
 which chromium
 which chromedriver
+chromedriver --version
+```
+
+如果 `chromedriver --version` 提示需要安装 chromium snap，说明命中了 `/usr/bin/chromedriver` 的 snap 占位命令。不要在 DSW 容器里继续走 snap，按第 5 节的 Google Chrome + Chrome for Testing 方案安装，并优先使用：
+
+```text
+/usr/local/bin/chromedriver
 ```
 
 ### 19.4 中文显示异常
@@ -922,4 +991,3 @@ DSW 公共资源实例运行中会持续计费。每天实验结束后：
 - Qwen2-VL 模型：<https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct>
 - Qwen2-VL 官方仓库：<https://github.com/QwenLM/Qwen2-VL>
 - LLaMA-Factory 官方仓库：<https://github.com/hiyouga/LLaMA-Factory>
-
