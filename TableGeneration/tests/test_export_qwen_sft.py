@@ -61,6 +61,19 @@ class ExportQwenSftTest(unittest.TestCase):
             self.assertTrue(Path(samples[0]["images"][0]).is_absolute())
             self.assertIn('"text": "0"', samples[0]["messages"][1]["content"])
 
+    def test_html_target_wraps_structure_fragments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_dataset(root, count=1)
+            gt_path = root / "gt.txt"
+            rows = [json.loads(line) for line in gt_path.read_text(encoding="utf-8").splitlines()]
+            rows[0]["html"]["structure"]["tokens"] = ["<tr>", "<td>", "</td>", "</tr>"]
+            write_jsonl(gt_path, rows)
+
+            samples = build_samples(root, "prompt", False, "html")
+
+            self.assertEqual(samples[0]["messages"][1]["content"], "<table><tr><td>0</td></tr></table>")
+
     def test_split_and_write_outputs(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

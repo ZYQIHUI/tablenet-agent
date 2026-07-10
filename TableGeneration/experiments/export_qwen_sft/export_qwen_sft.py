@@ -41,7 +41,10 @@ def gt_to_html(gt_row):
         text = clean_text("".join(cell.get("tokens", [])))
         if text:
             tokens.insert(position + 1, text)
-    return "".join(tokens)
+    result = "".join(tokens).strip()
+    if result and "<table" not in result.lower():
+        result = f"<table>{result}</table>"
+    return result
 
 
 def target_text(target, gt_row, cell_row, meta_row):

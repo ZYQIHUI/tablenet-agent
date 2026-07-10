@@ -515,6 +515,12 @@ for name, file_name in {
         "columns": {
             "messages": "messages",
             "images": "images"
+        },
+        "tags": {
+            "role_tag": "role",
+            "content_tag": "content",
+            "user_tag": "user",
+            "assistant_tag": "assistant"
         }
     }
 

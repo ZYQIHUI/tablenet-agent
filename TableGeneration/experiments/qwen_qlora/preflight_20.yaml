@@ -1,0 +1,42 @@
+### model
+model_name_or_path: /mnt/workspace/models/Qwen2-VL-2B-Instruct
+trust_remote_code: true
+quantization_method: bitsandbytes
+quantization_bit: 4
+upcast_layernorm: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+
+### dataset
+dataset_dir: /mnt/workspace/models/LLaMA-Factory/data
+dataset: tablenet_train
+template: qwen2_vl
+cutoff_len: 4096
+max_samples: 20
+overwrite_cache: true
+preprocessing_num_workers: 2
+
+### output
+output_dir: /mnt/workspace/tablenet/results/qwen2-vl-2b/qlora/preflight_20
+logging_steps: 1
+save_steps: 5
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 4
+gradient_checkpointing: true
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_steps: 1
+fp16: true
+
+### eval
+eval_strategy: "no"

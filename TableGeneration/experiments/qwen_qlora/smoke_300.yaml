@@ -1,0 +1,45 @@
+### model
+model_name_or_path: /mnt/workspace/models/Qwen2-VL-2B-Instruct
+trust_remote_code: true
+quantization_method: bitsandbytes
+quantization_bit: 4
+upcast_layernorm: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+
+### dataset
+dataset_dir: /mnt/workspace/models/LLaMA-Factory/data
+dataset: tablenet_train
+eval_dataset: tablenet_val
+template: qwen2_vl
+cutoff_len: 4096
+max_samples: 300
+overwrite_cache: true
+preprocessing_num_workers: 2
+
+### output
+output_dir: /mnt/workspace/tablenet/results/qwen2-vl-2b/qlora/smoke_300
+logging_steps: 5
+save_steps: 10
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_steps: 1
+fp16: true
+
+### eval
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 10
