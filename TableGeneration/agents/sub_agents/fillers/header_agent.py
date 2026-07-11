@@ -90,16 +90,26 @@ class HeaderAgent:
         headers = self.HEADERS.get(plan.domain, self.HEADERS["general"])
         group_headers = self.GROUP_HEADERS.get(plan.domain, self.GROUP_HEADERS["general"])
         row_headers = self.ROW_HEADERS.get(plan.domain, self.ROW_HEADERS["general"])
-        scenario_headers = self.SCENARIO_HEADERS.get(plan.semantic_scenario)
-        if scenario_headers:
-            headers = scenario_headers["headers"]
-            group_headers = scenario_headers["group_headers"]
-            row_headers = scenario_headers["row_headers"]
-        llm_headers = self._headers_from_llm(plan)
-        if llm_headers:
-            headers = self._merge_headers(headers, llm_headers.get("headers"))
-            group_headers = self._merge_headers(group_headers, llm_headers.get("group_headers"))
-            row_headers = self._merge_headers(row_headers, llm_headers.get("row_headers"))
+
+        # Template mode: use pre-generated headers from templates.json
+        if plan.template_headers:
+            headers = plan.template_headers
+            if plan.template_group_headers:
+                group_headers = plan.template_group_headers
+            if plan.template_row_headers:
+                row_headers = plan.template_row_headers
+        else:
+            # Normal mode: scenario headers or LLM
+            scenario_headers = self.SCENARIO_HEADERS.get(plan.semantic_scenario)
+            if scenario_headers:
+                headers = scenario_headers["headers"]
+                group_headers = scenario_headers["group_headers"]
+                row_headers = scenario_headers["row_headers"]
+            llm_headers = self._headers_from_llm(plan)
+            if llm_headers:
+                headers = self._merge_headers(headers, llm_headers.get("headers"))
+                group_headers = self._merge_headers(group_headers, llm_headers.get("group_headers"))
+                row_headers = self._merge_headers(row_headers, llm_headers.get("row_headers"))
         for cell in schema.cells:
             if cell.role == "title":
                 cell.text = plan.topic

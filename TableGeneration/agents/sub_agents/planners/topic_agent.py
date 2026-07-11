@@ -101,6 +101,32 @@ class TopicAgent:
         self.used_topics = set()
 
     def plan(self, request: TableRequest) -> TablePlan:
+        # Template mode: pre-generated template data takes priority
+        if request.template_data:
+            tpl = request.template_data
+            rows = random.randint(request.min_rows, request.max_rows)
+            cols = random.randint(request.min_cols, request.max_cols)
+            simple = request.simple if request.simple is not None else random.random() < 0.55
+            colored = request.colored if request.colored is not None else random.random() < 0.4
+            lined = request.lined if request.lined is not None else random.random() < 0.7
+            self.used_topics.add(tpl.get("topic", ""))
+            return TablePlan(
+                domain=tpl.get("domain", request.domain),
+                language=request.language,
+                topic=tpl.get("topic", ""),
+                rows=rows,
+                cols=cols,
+                simple=simple,
+                colored=colored,
+                lined=lined,
+                config_id=request.config_id,
+                semantic_scenario=tpl.get("semantic_scenario", "template"),
+                structure_type=request.structure_type,
+                template_headers=tpl.get("headers"),
+                template_row_headers=tpl.get("row_headers"),
+                template_group_headers=tpl.get("group_headers"),
+            )
+
         rows = random.randint(request.min_rows, request.max_rows)
         cols = random.randint(request.min_cols, request.max_cols)
         simple = request.simple if request.simple is not None else random.random() < 0.55

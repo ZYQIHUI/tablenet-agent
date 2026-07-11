@@ -16,6 +16,7 @@ class TableRequest:
     lined: Optional[bool] = None
     config_id: Optional[str] = None
     structure_type: Optional[str] = None
+    template_data: Optional[dict] = None  # pre-generated template (domain, topic, headers, etc.)
 
 
 @dataclass
@@ -31,6 +32,9 @@ class TablePlan:
     config_id: Optional[str] = None
     semantic_scenario: str = "general"
     structure_type: Optional[str] = None
+    template_headers: Optional[List[str]] = None
+    template_row_headers: Optional[List[str]] = None
+    template_group_headers: Optional[List[str]] = None
 
 
 @dataclass

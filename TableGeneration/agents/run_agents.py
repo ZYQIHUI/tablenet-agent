@@ -95,7 +95,7 @@ def find_default_chromedriver():
     return None
 
 
-def build_request(args, simple=None, colored=None, lined=None, config_id=None, structure_type=None):
+def build_request(args, simple=None, colored=None, lined=None, config_id=None, structure_type=None, template_data=None):
     return TableRequest(
         domain=args.domain,
         language=args.language,
@@ -108,6 +108,7 @@ def build_request(args, simple=None, colored=None, lined=None, config_id=None, s
         lined=lined,
         config_id=config_id,
         structure_type=structure_type,
+        template_data=template_data,
     )
 
 
@@ -124,11 +125,14 @@ def max_attempts(args):
     return target
 
 
-def request_for_index(args, idx):
+def request_for_index(args, idx, templates=None):
+    # Pick a template if templates are loaded
+    template = random.choice(templates) if templates else None
+
     if args.balanced_configs:
         config_id, simple, colored, lined = BALANCED_CONFIGS[idx % len(BALANCED_CONFIGS)]
         structure_type = structure_type_for_index(args, idx, simple)
-        return build_request(args, simple, colored, lined, config_id, structure_type)
+        return build_request(args, simple, colored, lined, config_id, structure_type, template)
     simple = True if args.simple else False if args.complex else None
     structure_type = structure_type_for_index(args, idx, simple)
     return build_request(
@@ -138,6 +142,7 @@ def request_for_index(args, idx):
         lined=args.lined,
         config_id="manual",
         structure_type=structure_type,
+        template_data=template,
     )
 
 
