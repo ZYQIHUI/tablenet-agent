@@ -1,6 +1,6 @@
 import random
 
-from ...types import Cell, TablePlan, TableSchema
+from ...agent_types import Cell, TablePlan, TableSchema
 
 
 class SchemaAgent:

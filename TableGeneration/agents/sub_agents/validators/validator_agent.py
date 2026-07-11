@@ -1,4 +1,4 @@
-from ...types import TableSchema
+from ...agent_types import TableSchema
 
 
 class ValidatorAgent:

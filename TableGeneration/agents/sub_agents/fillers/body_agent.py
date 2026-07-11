@@ -1,7 +1,7 @@
 import os
 import random
 
-from ...types import TablePlan, TableSchema
+from ...agent_types import TablePlan, TableSchema
 
 
 def _load_corpus(path):

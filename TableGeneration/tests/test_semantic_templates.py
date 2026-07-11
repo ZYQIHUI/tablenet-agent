@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agents.sub_agents.fillers.header_agent import HeaderAgent
 from agents.sub_agents.planners.schema_agent import SchemaAgent
 from agents.sub_agents.planners.topic_agent import TopicAgent
-from agents.types import TablePlan, TableRequest
+from agents.agent_types import TablePlan, TableRequest
 
 
 class SemanticTemplatesTest(unittest.TestCase):

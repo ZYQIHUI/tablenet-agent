@@ -1,7 +1,7 @@
 import random
 from typing import Callable, Optional
 
-from ...types import TablePlan, TableRequest
+from ...agent_types import TablePlan, TableRequest
 
 
 class TopicAgent:

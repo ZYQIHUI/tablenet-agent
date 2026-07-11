@@ -6,7 +6,7 @@ from agents.sub_agents.planners.schema_agent import SchemaAgent
 from agents.sub_agents.planners.style_agent import StyleAgent
 from agents.sub_agents.planners.topic_agent import TopicAgent
 from agents.tools.rendering.html_builder import HtmlBuilder
-from agents.types import TableRequest
+from agents.agent_types import TableRequest
 from agents.sub_agents.validators.filling_checker import FillingChecker
 from agents.sub_agents.validators.validator_agent import ValidatorAgent
 

@@ -1,6 +1,6 @@
 import random
 
-from ...types import TablePlan, TableStyle
+from ...agent_types import TablePlan, TableStyle
 
 
 class StyleAgent:

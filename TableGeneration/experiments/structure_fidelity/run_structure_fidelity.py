@@ -14,7 +14,7 @@ from agents.sub_agents.fillers.body_agent import BodyAgent
 from agents.sub_agents.fillers.header_agent import HeaderAgent
 from agents.sub_agents.planners.schema_agent import SchemaAgent
 from agents.tools.rendering.html_builder import HtmlBuilder
-from agents.types import TablePlan, TableStyle
+from agents.agent_types import TablePlan, TableStyle
 
 
 CASES = (

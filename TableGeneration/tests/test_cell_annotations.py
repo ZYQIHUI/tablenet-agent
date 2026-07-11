@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.tools.rendering.renderer_tool import RendererTool
-from agents.types import AgentTable, Cell, TablePlan, TableSchema, TableStyle
+from agents.agent_types import AgentTable, Cell, TablePlan, TableSchema, TableStyle
 
 
 class CellAnnotationsTest(unittest.TestCase):

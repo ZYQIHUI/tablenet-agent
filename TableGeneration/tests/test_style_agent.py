@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.sub_agents.planners.style_agent import StyleAgent
-from agents.types import TablePlan
+from agents.agent_types import TablePlan
 
 
 class StyleAgentTest(unittest.TestCase):

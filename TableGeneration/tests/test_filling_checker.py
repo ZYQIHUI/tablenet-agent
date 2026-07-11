@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.sub_agents.validators.filling_checker import FillingChecker
-from agents.types import Cell, TablePlan, TableSchema
+from agents.agent_types import Cell, TablePlan, TableSchema
 
 
 def telecom_plan():

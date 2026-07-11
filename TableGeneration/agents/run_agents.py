@@ -12,7 +12,7 @@ from agents.tools.adapters.llm_body_client import LLMBodyClient
 from agents.tools.adapters.llm_header_client import LLMHeaderClient
 from agents.tools.adapters.llm_topic_client import LLMTopicClient
 from agents.tools.rendering.renderer_tool import RendererTool
-from agents.types import TableRequest
+from agents.agent_types import TableRequest
 
 
 BALANCED_CONFIGS = [

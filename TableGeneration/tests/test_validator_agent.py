@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.sub_agents.planners.schema_agent import SchemaAgent
 from agents.sub_agents.validators.validator_agent import ValidatorAgent
-from agents.types import Cell, TablePlan, TableSchema
+from agents.agent_types import Cell, TablePlan, TableSchema
 
 
 def assign_ids(cells):

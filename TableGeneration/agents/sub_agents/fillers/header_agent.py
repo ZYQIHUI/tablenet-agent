@@ -1,4 +1,4 @@
-from ...types import TablePlan, TableSchema
+from ...agent_types import TablePlan, TableSchema
 
 
 class HeaderAgent:

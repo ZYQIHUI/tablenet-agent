@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.core_agent import CoreAgent
 from agents.sub_agents.validators.filling_checker import FillingCheckReport
-from agents.types import AgentTable, Cell, TablePlan, TableRequest, TableSchema, TableStyle
+from agents.agent_types import AgentTable, Cell, TablePlan, TableRequest, TableSchema, TableStyle
 
 
 class StaticTopicAgent:

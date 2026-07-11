@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from ...types import TablePlan, TableSchema
+from ...agent_types import TablePlan, TableSchema
 
 
 @dataclass

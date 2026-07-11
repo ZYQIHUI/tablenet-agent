@@ -1,6 +1,6 @@
 from html import escape
 
-from ...types import AgentTable, TablePlan, TableSchema, TableStyle
+from ...agent_types import AgentTable, TablePlan, TableSchema, TableStyle
 
 
 class HtmlBuilder:
