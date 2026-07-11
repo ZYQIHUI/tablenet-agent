@@ -134,7 +134,8 @@ class BodyAgent:
             return None
         return values, body_cells
 
-    def _apply_llm_values(self, schema: TableSchema, body_cells, values):
+    def _apply_llm_values(self, schema: TableSchema, body_cells, values,
+                          language="zh"):
         schema_body_cells = [
             cell for cell in sorted(schema.cells, key=lambda item: (item.row, item.col))
             if cell.role == "body"
@@ -156,6 +157,7 @@ class BodyAgent:
                 body_meta.get("expected_type", "text"),
                 body_meta.get("header", ""),
                 value,
+                language=language,
             )
         return True
 
