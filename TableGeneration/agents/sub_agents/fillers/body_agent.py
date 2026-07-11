@@ -1,6 +1,33 @@
+import os
 import random
 
 from ...types import TablePlan, TableSchema
+
+
+def _load_corpus(path):
+    """Load a corpus file into a single string."""
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, mode="r", encoding="utf-8") as f:
+            lines = [line.strip("\n").strip("\r\n") for line in f.readlines()]
+        return "".join(lines)
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _sample_text(corpus, min_len=2, max_len=8):
+    """Sample a random substring from corpus."""
+    if not corpus or len(corpus) < min_len:
+        return ""
+    effective = min(len(corpus), max_len)
+    # ensure we have room
+    hi = len(corpus) - min_len
+    if hi <= 0:
+        return corpus[:max_len]
+    start = random.randint(0, hi)
+    length = random.randint(min_len, min(max_len, len(corpus) - start))
+    return corpus[start:start + length]
 
 
 class BodyAgent:
@@ -15,9 +42,28 @@ class BodyAgent:
     PACKAGES = ["畅享套餐", "融合套餐", "校园套餐", "政企套餐", "家庭套餐", "流量包"]
     TIME_WINDOWS = ["早高峰", "午间", "晚高峰", "夜间", "节假日", "工作日"]
 
-    def __init__(self, llm_body_client=None, use_llm=False):
+    def __init__(self, llm_body_client=None, use_llm=False,
+                 ch_corpus_path=None, en_corpus_path=None):
         self.llm_body_client = llm_body_client
         self.use_llm = use_llm
+        self.ch_corpus = _load_corpus(ch_corpus_path) if ch_corpus_path else ""
+        self.en_corpus = _load_corpus(en_corpus_path) if en_corpus_path else ""
+        # Minimal corpus for English fallback
+        if not self.en_corpus:
+            self.en_corpus = "abcdefghijklmnopqrstuvwxyz"
+
+    def _text(self, language="zh"):
+        """Generate diverse text from corpus, falling back to small pool."""
+        if language == "zh" and self.ch_corpus:
+            text = _sample_text(self.ch_corpus, min_len=3, max_len=10)
+            if text:
+                return text
+        if language == "en" and self.en_corpus:
+            text = _sample_text(self.en_corpus, min_len=3, max_len=10)
+            if text:
+                return text
+        # Ultimate fallback — unchanged small pool
+        return random.choice(self.STATUS)
 
     def fill(self, schema: TableSchema, plan: TablePlan) -> TableSchema:
         headers = self._headers_by_col(schema)
@@ -25,7 +71,7 @@ class BodyAgent:
         llm_result = self._values_from_llm(schema, plan, headers, row_headers)
         if llm_result:
             llm_values, body_cells = llm_result
-            if self._apply_llm_values(schema, body_cells, llm_values):
+            if self._apply_llm_values(schema, body_cells, llm_values, plan.language):
                 return schema
         for cell in schema.cells:
             if cell.role != "body":
@@ -56,7 +102,7 @@ class BodyAgent:
             elif any(keyword in header for keyword in ("状态", "类型", "偏好", "设备")):
                 cell.text = random.choice(self.STATUS)
             else:
-                cell.text = self._fallback_value(cell.col)
+                cell.text = self._text(plan.language)
         return schema
 
     def _values_from_llm(self, schema: TableSchema, plan: TablePlan, headers, row_headers):
@@ -146,7 +192,8 @@ class BodyAgent:
             return "numeric"
         return "text"
 
-    def _normalize_value(self, expected_type: str, header: str, value) -> str:
+    def _normalize_value(self, expected_type: str, header: str, value,
+                         language="zh") -> str:
         text = str(value).strip()
         if expected_type == "percent":
             if text.endswith("%"):
@@ -165,6 +212,7 @@ class BodyAgent:
                 return random.choice(self.STATUS)
             if any(keyword in header for keyword in ("区域", "部门", "项目", "用户类型", "客户类型", "群体")):
                 return random.choice(self.REGIONS)
+            return self._text(language)
         return text
 
     def _leading_numeric(self, text: str):
