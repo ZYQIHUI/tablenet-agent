@@ -84,14 +84,17 @@ def main():
     print()
 
     try:
-        result = client._chat_completion(prompt, max_tokens=16000, temperature=0.9)
+        result = client._chat_completion(prompt, temperature=0.9)
     except Exception as e:
         print(f"API call failed: {e}")
         print("\nFallback: using hardcoded templates instead.")
         result = _fallback_templates(count, args.domain)
 
-    # Parse response
-    templates = _parse_templates(result, count, args.domain)
+    # Parse response (fallback returns list, API returns string)
+    if isinstance(result, list):
+        templates = result
+    else:
+        templates = _parse_templates(result, count, args.domain)
     if not templates:
         print("Parsing failed, using fallback templates.")
         templates = _fallback_templates(count, args.domain)
