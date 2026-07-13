@@ -31,6 +31,8 @@ python agents\run_agents.py --num 1 --semantic_mode rule --output output\smoke
 
 生成图片需要 Chrome 和版本匹配的 ChromeDriver，具体配置见下文。
 
+成功标准：命令退出码为 0，`output\smoke\img` 中有 JPG，且同目录存在 `gt.txt`、`meta.jsonl` 和 `cells.jsonl`。
+
 ## 1. 入口选择
 
 当前有两个主要入口：
@@ -57,6 +59,30 @@ pip install -r requirements.txt
 ```
 
 建议使用 Python 3.10+。
+
+推荐使用独立虚拟环境。在 Windows PowerShell 中：
+
+```powershell
+cd "E:\SchoolContents\2026-TableNet- A Large-Scale Table Dataset with L\TableGeneration"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pytest -q
+```
+
+在 Linux / PAI-DSW 中：
+
+```bash
+cd /mnt/workspace/tablenet/tablenet-agent/TableGeneration
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pytest -q
+```
+
+`requirements.txt` 只包含数据生成端依赖。Qwen2-VL 推理和 QLoRA 训练还需要 PyTorch、Transformers、PEFT、bitsandbytes、Qwen-VL 相关依赖及 LLaMA-Factory，建议在 GPU 服务器按 `PAI-DSW部署步骤.md` 单独配置。
 
 ### 2.2 启用浏览器渲染
 
@@ -287,6 +313,40 @@ render_failed
 generation_failed
 ```
 
+### 7.1 Agent 入口完整参数
+
+以下参数以当前 `python agents\run_agents.py --help` 为准：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `--num` | `1` | 未设置 `--target_num` 时的生成数量 |
+| `--target_num` | 空 | 要得到的合格样本数；批量生成推荐使用 |
+| `--max_attempts` | 自动 | 最大尝试次数；启用重试时默认是目标数的 3 倍 |
+| `--retry_failed` | 关闭 | 单个样本失败后继续生成，直到达标或达到最大尝试数 |
+| `--report` | 关闭 | 生成 `report.json` 和 `report.md` |
+| `--output` | `output/agent_table` | 输出目录；相对于当前工作目录解析 |
+| `--domain` | `telecommunications` | 语义领域 |
+| `--language` | `zh` | 内容语言 |
+| `--min_row` / `--max_row` | `4` / `12` | 表格行数范围 |
+| `--min_col` / `--max_col` | `3` / `8` | 表格列数范围 |
+| `--simple` / `--complex` | 随机 | 二选一，强制简单或复杂结构 |
+| `--colored` / `--no-colored` | 随机 | 强制彩色或无色样式 |
+| `--lined` / `--no-lined` | 随机 | 强制有线框或无线框 |
+| `--balanced_configs` | 关闭 | 轮询 8 种简单/复杂、彩色/无色、线框/无线框组合 |
+| `--balanced_structures` | 关闭 | 对复杂样本轮询 7 种结构类型 |
+| `--brower` | `chrome` | 浏览器类型；参数名是代码中的历史拼写 |
+| `--brower_width` / `--brower_height` | `1920` / `2440` | 浏览器渲染画布尺寸 |
+| `--chrome_driver_path` | 自动查找 | ChromeDriver 可执行文件路径 |
+| `--semantic_mode` | `auto` | `rule`、`auto` 或 `llm`，详见第 4 节 |
+
+LLM 的 Topic、Header、Body 三组参数均支持 `--use_llm_*`、`--llm_*_api_key`、`--llm_*_base_url`、`--llm_*_model` 和 `--llm_*_system_prompt`。密钥推荐写入 `agents/.env`，不要直接写入命令历史、README 或 Git。
+
+随时用下面的命令核对当前代码支持的参数：
+
+```powershell
+python agents\run_agents.py --help
+```
+
 ## 8. 启用原始生成器
 
 如果只想使用原始 `TableGeneration` 生成器：
@@ -327,6 +387,42 @@ Agent 生成链输出：
 | `report.json` | 批量统计，需启用 `--report` |
 | `report.md` | 批量统计 Markdown，需启用 `--report` |
 
+### 9.1 生成后验收
+
+先检查报告中的目标数、成功数、成功率和失败分类：
+
+```powershell
+Get-Content ..\output\balanced_rule\report.md
+Get-Content ..\output\balanced_rule\report.json
+```
+
+再运行数据审计。审计会检查图片、HTML、GT、metadata 和 cell 标注之间的一致性：
+
+```powershell
+python experiments\dataset_audit\run_dataset_audit.py `
+  --input ..\output\balanced_rule `
+  --output_dir ..\output\balanced_rule `
+  --fail_on_error
+```
+
+审计完成后查看：
+
+```powershell
+Get-Content ..\output\balanced_rule\audit.md
+```
+
+用于自动化或 CI 时保留 `--fail_on_error`，发现严重错误会返回非零退出码；人工探索时可以去掉该参数。
+
+### 9.2 可视化检查 GT
+
+```powershell
+python vis_gt.py `
+  --image_dir ..\output\balanced_rule\img `
+  --gt_path ..\output\balanced_rule\gt.txt
+```
+
+至少人工抽查简单、复杂、rowspan、colspan、无线框和中文长文本样本，确认 bbox 没有明显错位。
+
 ## 10. 常见启用组合
 
 本地最小验证：
@@ -359,6 +455,8 @@ python agents\run_agents.py --target_num 300 --balanced_configs --balanced_struc
 python experiments\generate_templates.py --count 50 --output output\semantic_templates.json
 ```
 
+该命令会尝试调用 LLM；缺少配置或调用失败时会写出内置 fallback 模板。当前本地 `run_agents.py` 尚未公开 `--templates` 参数，因此模板文件的批量消费流程不要仅凭 `experiments/run_parallel.py` 直接启动；该脚本保留了服务器实验路径和参数，使用前需先与当前入口对齐。
+
 将生成结果导出为 Qwen2-VL/LLaMA-Factory 使用的 SFT 数据：
 
 ```powershell
@@ -370,9 +468,119 @@ python experiments\export_qwen_sft\export_qwen_sft.py `
   --target html
 ```
 
+导出参数说明：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `--input` | 必填 | 包含 `meta.jsonl`、`cells.jsonl`、`img/` 和可选 `gt.txt` 的生成目录 |
+| `--output_dir` | 必填 | 写出训练数据的目录 |
+| `--val_ratio` / `--test_ratio` | `0.1` / `0.1` | 验证集与测试集比例 |
+| `--seed` | `42` | 固定数据划分，复现实验时不要随意改变 |
+| `--absolute_images` | 关闭 | 写入绝对图片路径，服务器训练时通常需要启用 |
+| `--target` | `html` | 可选 `html`、`cells` 或 `json` |
+| `--prompt` | 内置提示词 | 覆盖用户提示词；对比实验必须保持一致 |
+
+导出器只会写出 `train.json`、`val.json`、`test.json` 和 `manifest.json`，不会自动修改 LLaMA-Factory。先检查文件和样本数：
+
+```powershell
+Get-ChildItem ..\output\tablenet_mini_300_sft
+Get-Content ..\output\tablenet_mini_300_sft\manifest.json
+```
+
+随后需要把这些 JSON 放到 LLaMA-Factory 可访问的位置，并在其 `data/dataset_info.json` 中手动注册 train/val 数据集。注册名必须与训练 YAML 的 `dataset`、`eval_dataset` 完全一致。
+
+### 10.1 结构保真度实验
+
+这是轻量级离线实验，不需要加载 Qwen 模型：
+
+```powershell
+python experiments\structure_fidelity\run_structure_fidelity.py `
+  --samples_per_case 7 `
+  --output experiments\structure_fidelity\results
+```
+
+输出包括 `summary.md`、`summary.csv` 和 `samples.jsonl`。其中 `llm_direct` 是确定性离线模拟基线，不能表述为真实在线 LLM 结果。
+
+### 10.2 QLoRA 训练
+
+训练在已安装 LLaMA-Factory 且具备 NVIDIA GPU 的 Linux/DSW 环境进行。先根据实际目录修改 YAML 中的 `model_name_or_path`、`dataset_dir` 和 `output_dir`，然后先跑 20 样本预检：
+
+```bash
+llamafactory-cli train /mnt/workspace/tablenet/tablenet-agent/TableGeneration/experiments/qwen_qlora/preflight_20.yaml
+```
+
+确认没有 OOM、NaN 或数据解析错误，并且输出目录生成 Adapter 文件后，再运行 300 样本 smoke：
+
+```bash
+llamafactory-cli train /mnt/workspace/tablenet/tablenet-agent/TableGeneration/experiments/qwen_qlora/smoke_300.yaml
+```
+
+不要直接照搬 YAML 中的绝对路径到另一台机器。LLaMA-Factory 的 `dataset_info.json` 还需要注册导出的数据集，并正确配置 ShareGPT 的 role/content tags；完整示例见 `PAI-DSW部署步骤.md`。
+
+### 10.3 基线与 Adapter 批量评价
+
+推理脚本额外依赖 `torch`、`transformers`、`peft` 和 Qwen2-VL 运行环境。基础模型评价：
+
+```bash
+python experiments/qwen_baseline/run_qwen_baseline.py \
+  --model /mnt/workspace/models/Qwen2-VL-2B-Instruct \
+  --data_json /mnt/workspace/tablenet/data/tablenet_smoke_300_sft/test.json \
+  --meta_jsonl /mnt/workspace/tablenet/data/tablenet_dsw_smoke_300/meta.jsonl \
+  --output /mnt/workspace/tablenet/results/baseline/qwen2-vl-2b/test_30
+```
+
+加载 Adapter 对同一个 test split 评价：
+
+```bash
+python experiments/qwen_baseline/run_qwen_baseline.py \
+  --model /mnt/workspace/models/Qwen2-VL-2B-Instruct \
+  --adapter /mnt/workspace/tablenet/results/qwen2-vl-2b/qlora/smoke_300 \
+  --data_json /mnt/workspace/tablenet/data/tablenet_smoke_300_sft/test.json \
+  --meta_jsonl /mnt/workspace/tablenet/data/tablenet_dsw_smoke_300/meta.jsonl \
+  --output /mnt/workspace/tablenet/results/qwen2-vl-2b/adapter/test_30
+```
+
+快速检查单个样本可增加 `--sample_index 0`，限制批量样本数可使用 `--max_samples 10`。正式对比必须固定 test split、prompt、`--max_new_tokens`、模型版本和清洗/评价代码。
+
+## 11. 常见问题
+
+### ChromeDriver 无法启动
+
+依次检查 Chrome 与 Driver 的主版本是否一致、路径是否正确，以及 Linux 中是否命中了 snap 占位命令：
+
+```powershell
+& "..\chromedriver-win64\chromedriver.exe" --version
+```
+
+```bash
+google-chrome --version
+chromedriver --version
+which -a chromedriver
+```
+
+### 生成数量少于目标数
+
+使用 `--target_num`、`--retry_failed` 和足够大的 `--max_attempts`，然后检查 `report.json` 中的 `failure_counts`。`--num` 表示计划尝试数，不保证失败后补足；批量数据应优先使用 `--target_num`。
+
+### LLM 模式没有生成 LLM 内容
+
+`auto` 和 `llm` 都保留规则 fallback。检查 `agents/.env` 的 API key、base URL、model 和 system prompt 是否完整，并检查终端中的调用错误。需要完全离线和确定性执行时使用 `--semantic_mode rule`。
+
+### Qwen 推理提示缺少模块
+
+出现 `ModuleNotFoundError: peft`、`torch` 或 `transformers` 时，说明当前环境只有数据生成依赖。请切换到 GPU 推理/训练环境，不要把模型依赖强行加入轻量数据生成环境后就假定 CUDA 配置正确。
+
+### LLaMA-Factory 报 `KeyError: 'from'`
+
+检查 `dataset_info.json` 是否为 ShareGPT 数据配置了 `role_tag`、`content_tag`、`user_tag` 和 `assistant_tag`。同时确认图片字段和 `<image>` 占位符符合 `qwen2_vl` 模板要求。
+
+### Windows 路径与服务器路径不一致
+
+本地生成可以使用相对路径；服务器训练推荐导出时使用 `--absolute_images`。移动数据后需要重新导出或更新 JSON 中的图片路径，不能只移动 `img/` 目录。
+
 QLoRA 预检和训练配置位于 `TableGeneration/experiments/qwen_qlora/`。模型依赖、服务器目录和批量评价流程见 `PAI-DSW部署步骤.md` 与 `复现过程实验记录.md`。
 
-## 11. 参考文档
+## 12. 参考文档
 
 - [TableNet 中文整理](./2026-TableNet-cn.md)
 - [复现过程实验记录](./复现过程实验记录.md)
