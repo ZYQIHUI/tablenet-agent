@@ -1,6 +1,35 @@
-# TableNet Agent 启用手册
+# TableNet-mini 复现项目
 
-本仓库是在原始 `TableGeneration` 表格渲染代码上，加入 TableNet-mini 多智能体生成链后的复现项目。README 的重点是说明各个能力如何启用；论文整理、实验记录和云端训练流程见文末参考。
+本仓库是在原始 `TableGeneration` 表格渲染代码上，加入 TableNet-mini 多智能体生成链后的复现项目。当前已经跑通“数据生成、自动校验、标注、SFT 导出、Qwen2-VL QLoRA 训练、批量评价”的最小闭环。
+
+> 本项目采用资源受限的 TableNet-mini 路线，目标是验证论文方法并逐步扩大实验规模；当前结果不代表已经复现论文的 445K 完整数据集和全部实验。
+
+## 当前进度
+
+更新日期：2026-07-13
+
+| 模块 | 状态 | 当前结果 |
+|---|---|---|
+| 多智能体表格生成 | 已完成 | 支持规则、LLM 和模板模式，覆盖 8 类视觉配置与 7 类复杂结构 |
+| 校验、重试与标注 | 已完成 | 输出样本元数据、cell bbox/role、结构与失败报告 |
+| 300 样本 QLoRA smoke | 已完成 | 跑通数据转换、训练、Adapter 回载和同样本推理 |
+| 30 样本批量对比 | 已完成 | 结构分 0.711 -> 0.896，文字准确率 0.581 -> 0.673 |
+| 1K v2 训练与评价 | 已完成 | 100 样本文字准确率 84.17%，结构分 0.938 |
+| 5K 数据阶段 | 数据已完成 | 已生成 5000 张并转换为 4000/500/500 的 SFT 划分，模型训练和正式评价待完成 |
+| 自动化测试 | 通过 | 本地 `pytest -q`：48 passed |
+
+当前尚未完成 TEDS 正式指标、真实数据泛化、论文完整 S/C/H/V 标注、5+4 数据增强、两级记忆和 445K 全规模实验。详细事实、服务器产物和限制以[复现过程实验记录](./复现过程实验记录.md)为准。
+
+## 快速验证
+
+```powershell
+cd TableGeneration
+pip install -r requirements.txt
+pytest -q
+python agents\run_agents.py --num 1 --semantic_mode rule --output output\smoke
+```
+
+生成图片需要 Chrome 和版本匹配的 ChromeDriver，具体配置见下文。
 
 ## 1. 入口选择
 
@@ -324,6 +353,25 @@ python agents\run_agents.py --num 1 --semantic_mode llm --output output\llm_smok
 python agents\run_agents.py --target_num 300 --balanced_configs --balanced_structures --retry_failed --max_attempts 900 --report --semantic_mode rule --output ..\output\tablenet_mini_300
 ```
 
+生成一批可复用的 LLM 语义模板：
+
+```powershell
+python experiments\generate_templates.py --count 50 --output output\semantic_templates.json
+```
+
+将生成结果导出为 Qwen2-VL/LLaMA-Factory 使用的 SFT 数据：
+
+```powershell
+python experiments\export_qwen_sft\export_qwen_sft.py `
+  --input ..\output\tablenet_mini_300 `
+  --output_dir ..\output\tablenet_mini_300_sft `
+  --val_ratio 0.1 `
+  --test_ratio 0.1 `
+  --target html
+```
+
+QLoRA 预检和训练配置位于 `TableGeneration/experiments/qwen_qlora/`。模型依赖、服务器目录和批量评价流程见 `PAI-DSW部署步骤.md` 与 `复现过程实验记录.md`。
+
 ## 11. 参考文档
 
 - [TableNet 中文整理](./2026-TableNet-cn.md)
@@ -332,3 +380,4 @@ python agents\run_agents.py --target_num 300 --balanced_configs --balanced_struc
 - [PAI-DSW 部署步骤](./PAI-DSW部署步骤.md)
 - [原始 TableGeneration 说明](./TableGeneration/README.md)
 - [Agent 代码说明](./TableGeneration/agents/codeExplain.md)
+- [30 样本批量评价报告](./output/batch_eval_analysis.md)
