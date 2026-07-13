@@ -17,6 +17,7 @@ class TableRequest:
     config_id: Optional[str] = None
     structure_type: Optional[str] = None
     template_data: Optional[dict] = None  # pre-generated template (domain, topic, headers, etc.)
+    natural_language_request: Optional[str] = None
 
 
 @dataclass
@@ -47,6 +48,7 @@ class Cell:
     colspan: int = 1
     role: str = "body"
     cell_id: Optional[int] = None
+    visual: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

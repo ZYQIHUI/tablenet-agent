@@ -15,8 +15,8 @@ class LLMTopicClient:
     DEFAULT_SYSTEM_PROMPT = (
         "You are a domain-aware table topic generation agent. "
         "Generate concise, specific, realistic table plans for synthetic table data. "
-        "Return valid JSON only with keys: topic, domain, semantic_scenario, rows, cols, attributes. "
-        "attributes may contain simple, colored, and lined booleans. Do not generate table cells."
+        "Return valid JSON only with keys: topic, domain, semantic_scenario. "
+        "Do not generate dimensions, styles, structure, or table cells."
     )
 
     def __init__(self, api_key=None, base_url=None, model=None, system_prompt=None):
@@ -30,6 +30,7 @@ class LLMTopicClient:
             or env.get("LLM_TOPIC_SYSTEM_PROMPT")
             or self.DEFAULT_SYSTEM_PROMPT
         )
+        self.last_usage = {}
 
     def generate_topic(
             self,
@@ -70,6 +71,7 @@ class LLMTopicClient:
         )
         with urlopen(request, timeout=self.timeout) as response:
             result = json.loads(response.read().decode("utf-8"))
+        self.last_usage = dict(result.get("usage") or {})
         return result["choices"][0]["message"]["content"]
 
     def _chat_completions_url(self) -> str:
@@ -88,25 +90,6 @@ class LLMTopicClient:
             "domain": self._clean_text(data.get("domain")),
             "semantic_scenario": self._clean_text(data.get("semantic_scenario")),
         }
-        for key in ("rows", "cols"):
-            value = data.get(key)
-            if isinstance(value, bool):
-                continue
-            try:
-                result[key] = int(value)
-            except (TypeError, ValueError):
-                pass
-        attributes = data.get("attributes")
-        if isinstance(attributes, dict):
-            result["attributes"] = {
-                key: value for key, value in attributes.items()
-                if key in ("simple", "colored", "lined") and isinstance(value, bool)
-            }
-        else:
-            result["attributes"] = {
-                key: data[key] for key in ("simple", "colored", "lined")
-                if isinstance(data.get(key), bool)
-            }
         return result
 
     def _loads_json_object(self, content: str):
@@ -143,19 +126,14 @@ class LLMTopicClient:
                 "max_cols": max_cols,
             },
             "task": (
-                "Generate one concise, domain-specific table plan. "
+                "Generate one concise, domain-specific table topic. "
                 "Avoid used topics. Return JSON only with keys: "
-                "topic, domain, semantic_scenario, rows, cols, attributes. "
-                "rows and cols must stay inside bounds. "
-                "attributes must only contain boolean simple, colored, lined."
+                "topic, domain, semantic_scenario. Do not return dimensions, style, structure, or cells."
             ),
             "format": {
                 "topic": "客户投诉受理与闭环统计",
                 "domain": domain,
                 "semantic_scenario": "customer_complaints",
-                "rows": min_rows,
-                "cols": min_cols,
-                "attributes": {"simple": True, "colored": False, "lined": True},
             },
         }
         return json.dumps(payload, ensure_ascii=False)

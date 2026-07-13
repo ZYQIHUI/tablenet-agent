@@ -22,6 +22,12 @@ class HtmlBuilder:
                     attrs.append(f'rowspan="{cell.rowspan}"')
                 if cell.colspan > 1:
                     attrs.append(f'colspan="{cell.colspan}"')
+                if cell.visual:
+                    inline_style = ";".join(
+                        f"{escape(str(name), quote=True)}:{escape(str(value), quote=True)}"
+                        for name, value in sorted(cell.visual.items())
+                    )
+                    attrs.append(f'style="{inline_style}"')
                 tag = cell.tag
                 html.append(f"<{tag} {' '.join(attrs)}>{escape(cell.text)}</{tag}>")
                 self._append_structure(structure, cell)

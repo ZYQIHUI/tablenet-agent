@@ -16,7 +16,7 @@
 | 30 样本批量对比 | 已完成 | 结构分 0.711 -> 0.896，文字准确率 0.581 -> 0.673 |
 | 1K v2 训练与评价 | 已完成 | 100 样本文字准确率 84.17%，结构分 0.938 |
 | 5K 数据阶段 | 数据已完成 | 已生成 5000 张并转换为 4000/500/500 的 SFT 划分，模型训练和正式评价待完成 |
-| 自动化测试 | 通过 | 本地 `pytest -q`：48 passed |
+| 自动化测试 | 通过 | 本地 `pytest -q`：持续随多智能体重构扩展 |
 
 当前尚未完成 TEDS 正式指标、真实数据泛化、论文完整 S/C/H/V 标注、5+4 数据增强、两级记忆和 445K 全规模实验。详细事实、服务器产物和限制以[复现过程实验记录](./复现过程实验记录.md)为准。
 
@@ -164,6 +164,98 @@ output/agent_rule/
 ```
 
 ## 4. 启用 LLM 语义生成
+
+语义 Agent 与具体推理后端解耦。入口支持四种模式：
+
+| 模式 | 参数 | 说明 |
+|---|---|---|
+| 规则流 | `--backend_mode rule` | 不调用模型，使用规则、模板和本地语料 |
+| 远程 API | `--backend_mode api` | 使用下方 OpenAI-compatible API 配置 |
+| 本地模型 | `--backend_mode local` | 惰性加载本地 Qwen2-VL 权重，Topic/Header/Body 共用一个模型实例 |
+| 混合模式 | `--backend_mode hybrid` | 配置本地模型路径时优先使用本地模型，否则使用 API，并允许显式规则回退 |
+
+`--semantic_mode auto|llm|rule` 暂时保留用于兼容旧命令；新实验应使用含义更明确的 `--backend_mode`。
+
+本地 Qwen 示例：
+
+```powershell
+python agents\run_agents.py `
+  --backend_mode local `
+  --local_model_path D:\models\Qwen2-VL-2B-Instruct `
+  --local_model_device auto `
+  --output output\agent_local
+```
+
+本地模式仅在首次模型调用时导入并加载 `torch`、`transformers` 和 Qwen2-VL 权重；规则模式和普通单元测试不要求安装这些训练/推理依赖。模型调用失败后的规则结果会显式记录为 `fallback`，而不是计为模型成功。
+
+论文的普通候选与四类增强可通过快捷参数启用：
+
+```powershell
+python agents\run_agents.py `
+  --backend_mode rule `
+  --paper_candidate_mode `
+  --output output\paper_candidates
+```
+
+`--paper_candidate_mode` 等价于 `--candidate_count 5 --augmentation_count 4`。四个增强候选分别执行 span-aware 的 `copy`、`delete`、`swap` 和 `alter`；每次变换后都会重新运行结构验证和三维质量门控。
+
+每次运行还会写出 `trace.jsonl`，其中包含：
+
+- `request_id` 和候选 ID；
+- 普通候选与增强候选的父子关系；
+- Validator、Checker 和论文三维分数；
+- API、本地模型或规则的实际来源及回退原因；
+- 修复动作、目标 cell/column、淘汰原因和最终选择依据。
+
+需要跨运行保持论文两级记忆时，指定共享记忆文件和会话 ID：
+
+```powershell
+python agents\run_agents.py `
+  --backend_mode rule `
+  --memory_path output\memory.json `
+  --session_id telecom-generation `
+  --output output\memory_run
+```
+
+Inner Memory 持久化 topic、schema signature、被拒候选和失败原因，用于跨进程去重；Outer Memory 按 `session_id` 保存请求偏好和对话记录。JSON 使用进程级锁、临时文件和原子替换写入，避免并发丢更新或异常中断留下半写文件。单机多 worker 可以共享同一路径；跨机器并发仍应改用数据库存储。
+
+当 SchemaAgent 在结构重建预算内持续失败时，系统最后调用 Fallback Constructor。Fallback 会构造可通过 coverage 验证的单位网格，并把旧 cell 到新 cell 的映射、原始错误和保留内容写入 trace，而不是静默随机换表。
+
+自然语言请求可通过 `--request_text` 交给受约束 Core Planner：
+
+```powershell
+python agents\run_agents.py `
+  --backend_mode local `
+  --local_model_path D:\models\Qwen2-VL-2B-Instruct `
+  --request_text "生成复杂的中文基站维护表，6 到 10 行" `
+  --output output\planned_tables
+```
+
+Core Planner 只能提出 domain、language、行列范围、simple/colored/lined 和 structure type 等白名单字段；确定性 Orchestrator 负责类型、范围、预算和动作校验。API/本地模型模式下，FillingChecker 还会调用匿名 Semantic Evaluator 评价 topic relevance 和 semantic consistency；结构正确性始终由确定性 Validator 判断。
+
+每张表的执行预算可独立限制：
+
+```powershell
+python agents\run_agents.py `
+  --backend_mode hybrid `
+  --max_model_calls 40 `
+  --max_elapsed_seconds 180 `
+  --max_schema_retries 3 `
+  --max_filling_retries 2 `
+  --max_candidates 20
+```
+
+预算耗尽会写入 `BUDGET_EXHAUSTED` trace 并明确终止。API 的 token usage、本地 Qwen 的输入/输出 token 数和 hybrid 的每次后端尝试都会保留在 Agent 事件中。
+
+多智能体部分的消融和统计工具位于 `TableGeneration/experiments/multi_agent/`：
+
+```powershell
+python experiments\multi_agent\run_ablation.py --samples_per_config 20 --output experiments\multi_agent\results\ablation
+python experiments\multi_agent\summarize_traces.py --trace ..\output\paper_trace_smoke\trace.jsonl --output experiments\multi_agent\results\trace_summary
+python experiments\multi_agent\checker_human_correlation.py --ratings ratings.csv --output experiments\multi_agent\results\human_correlation.json
+```
+
+消融固定比较单候选、5 个普通候选和完整 5+4。人工相关性脚本只计算真实评分 CSV，不生成或替代人工标签。
 
 多智能体链包含三个可选 LLM 入口：
 

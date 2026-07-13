@@ -11,8 +11,20 @@ from agents.core_agent import CoreAgent
 from agents.tools.adapters.llm_body_client import LLMBodyClient
 from agents.tools.adapters.llm_header_client import LLMHeaderClient
 from agents.tools.adapters.llm_topic_client import LLMTopicClient
+from agents.tools.adapters.llm_core_client import LLMCoreClient
+from agents.tools.adapters.llm_semantic_client import LLMSemanticClient
 from agents.tools.rendering.renderer_tool import RendererTool
 from agents.agent_types import TableRequest
+from agents.backends.local import LocalQwenClient
+from agents.backends import (
+    BackendRegistry,
+    BackendRoute,
+    BackendRouter,
+    ClientCapabilityBackend,
+    RoutedSemanticClient,
+)
+from agents.domain import AgentSource
+from agents.observability import TraceRecorder
 
 
 BALANCED_CONFIGS = [
@@ -42,6 +54,28 @@ def parse_args():
     parser.add_argument("--num", type=int, default=1)
     parser.add_argument("--target_num", type=int, default=None)
     parser.add_argument("--max_attempts", type=int, default=None)
+    parser.add_argument("--max_schema_retries", type=int, default=3)
+    parser.add_argument("--max_filling_retries", type=int, default=2)
+    parser.add_argument("--max_model_calls", type=int, default=100)
+    parser.add_argument("--max_elapsed_seconds", type=float, default=300.0)
+    parser.add_argument("--max_candidates", type=int, default=100)
+    parser.add_argument(
+        "--candidate_count",
+        type=int,
+        default=1,
+        help="Ordinary content candidates per schema; use 5 for the paper configuration.",
+    )
+    parser.add_argument(
+        "--augmentation_count",
+        type=int,
+        default=0,
+        help="Validated transformed candidates (0-4); use 4 for the paper configuration.",
+    )
+    parser.add_argument(
+        "--paper_candidate_mode",
+        action="store_true",
+        help="Shortcut for --candidate_count=5 --augmentation_count=4.",
+    )
     parser.add_argument("--retry_failed", action="store_true")
     parser.add_argument("--report", action="store_true")
     parser.add_argument("--output", type=str, default="output/agent_table")
@@ -58,6 +92,7 @@ def parse_args():
     parser.add_argument("--lined", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--balanced_configs", action="store_true")
     parser.add_argument("--balanced_structures", action="store_true")
+    parser.add_argument("--structure_type", choices=COMPLEX_STRUCTURE_TYPES, default=None)
     parser.add_argument("--brower", type=str, default="chrome")
     parser.add_argument("--brower_width", type=int, default=1920)
     parser.add_argument("--brower_height", type=int, default=2440)
@@ -68,6 +103,24 @@ def parse_args():
         default="auto",
         help="auto/llm enables LLM semantic agents with rule fallback; rule disables LLM calls.",
     )
+    parser.add_argument(
+        "--backend_mode",
+        choices=("rule", "api", "local", "hybrid"),
+        default=None,
+        help="Semantic backend. Overrides legacy --semantic_mode when provided.",
+    )
+    parser.add_argument("--local_model_path", type=str, default=None)
+    parser.add_argument("--local_model_device", type=str, default="auto")
+    parser.add_argument("--local_model_max_new_tokens", type=int, default=2048)
+    parser.add_argument("--local_model_temperature", type=float, default=0.7)
+    parser.add_argument(
+        "--memory_path",
+        type=str,
+        default=None,
+        help="Persistent JSON store for Outer/Inner Memory.",
+    )
+    parser.add_argument("--session_id", type=str, default="default")
+    parser.add_argument("--request_text", type=str, default=None)
     parser.add_argument("--use_llm_topic", action="store_true")
     parser.add_argument("--llm_topic_api_key", type=str, default=None)
     parser.add_argument("--llm_topic_base_url", type=str, default=None)
@@ -109,6 +162,7 @@ def build_request(args, simple=None, colored=None, lined=None, config_id=None, s
         config_id=config_id,
         structure_type=structure_type,
         template_data=template_data,
+        natural_language_request=getattr(args, "request_text", None),
     )
 
 
@@ -151,6 +205,11 @@ def requests_for_args(args):
 
 
 def structure_type_for_index(args, idx, simple):
+    requested = getattr(args, "structure_type", None)
+    if requested is not None:
+        if simple is True:
+            raise ValueError("unsupported request: structure_type cannot be used with --simple")
+        return requested
     if not args.balanced_structures or simple is True:
         return None
     if args.balanced_configs:
@@ -169,13 +228,117 @@ def classify_error(error):
         return "filling_low_score"
     if "render" in lowered or "selenium" in lowered or "webdriver" in lowered:
         return "render_failed"
+    if "unsupported request" in lowered:
+        return "unsupported_request"
+    if "budget exhausted" in lowered:
+        return "budget_exhausted"
     return "generation_failed"
 
 
 def use_llm(args, stage):
+    backend_mode = getattr(args, "backend_mode", None)
+    if backend_mode == "rule":
+        return False
+    if backend_mode in ("api", "local", "hybrid"):
+        return True
     if args.semantic_mode == "rule":
         return False
     return args.semantic_mode in ("auto", "llm") or getattr(args, f"use_llm_{stage}")
+
+
+def build_semantic_clients(args, use_topic, use_header, use_body):
+    mode = getattr(args, "backend_mode", None)
+    if mode == "rule":
+        return None, None, None, None, None
+    local_model_path = getattr(args, "local_model_path", None)
+    registry = BackendRegistry()
+    backend_names = []
+
+    if mode in ("local", "hybrid") and local_model_path:
+        local_client = LocalQwenClient(
+            model_path=local_model_path,
+            device=getattr(args, "local_model_device", "auto"),
+            max_new_tokens=getattr(args, "local_model_max_new_tokens", 2048),
+            temperature=getattr(args, "local_model_temperature", 0.7),
+        )
+        registry.register(ClientCapabilityBackend(
+            "local",
+            AgentSource.LOCAL_MODEL,
+            {
+                "request_planning": (local_client, "plan_request"),
+                "topic_generation": (local_client, "generate_topic"),
+                "header_generation": (local_client, "generate_headers"),
+                "body_generation": (local_client, "generate_body_values"),
+                "semantic_judging": (local_client, "evaluate_semantics"),
+            },
+        ))
+        backend_names.append("local")
+    if mode == "local" and not local_model_path:
+        raise ValueError("--local_model_path is required when --backend_mode=local")
+
+    include_api = mode in (None, "api", "hybrid")
+    if include_api:
+        core_api = LLMCoreClient(
+            api_key=getattr(args, "llm_topic_api_key", None),
+            base_url=getattr(args, "llm_topic_base_url", None),
+            model=getattr(args, "llm_topic_model", None),
+        )
+        topic_api = LLMTopicClient(
+            api_key=getattr(args, "llm_topic_api_key", None),
+            base_url=getattr(args, "llm_topic_base_url", None),
+            model=getattr(args, "llm_topic_model", None),
+            system_prompt=getattr(args, "llm_topic_system_prompt", None),
+        )
+        header_api = LLMHeaderClient(
+            api_key=getattr(args, "llm_header_api_key", None),
+            base_url=getattr(args, "llm_header_base_url", None),
+            model=getattr(args, "llm_header_model", None),
+            system_prompt=getattr(args, "llm_header_system_prompt", None),
+        )
+        body_api = LLMBodyClient(
+            api_key=getattr(args, "llm_body_api_key", None),
+            base_url=getattr(args, "llm_body_base_url", None),
+            model=getattr(args, "llm_body_model", None),
+            system_prompt=getattr(args, "llm_body_system_prompt", None),
+        )
+        semantic_api = LLMSemanticClient(
+            api_key=getattr(args, "llm_topic_api_key", None),
+            base_url=getattr(args, "llm_topic_base_url", None),
+            model=getattr(args, "llm_topic_model", None),
+        )
+        registry.register(ClientCapabilityBackend(
+            "api",
+            AgentSource.API,
+            {
+                "request_planning": (core_api, "plan_request"),
+                "topic_generation": (topic_api, "generate_topic"),
+                "header_generation": (header_api, "generate_headers"),
+                "body_generation": (body_api, "generate_body_values"),
+                "semantic_judging": (semantic_api, "evaluate_semantics"),
+            },
+        ))
+        backend_names.append("api")
+
+    if not backend_names:
+        return None, None, None, None, None
+    primary = "local" if mode == "hybrid" and "local" in backend_names else backend_names[0]
+    fallbacks = tuple(name for name in backend_names if name != primary)
+    routes = {
+        capability: BackendRoute(primary, fallbacks)
+        for capability in (
+            "request_planning", "topic_generation", "header_generation",
+            "body_generation", "semantic_judging",
+        )
+    }
+    routed = RoutedSemanticClient(BackendRouter(registry, routes))
+    explicit_mode = mode in ("api", "local", "hybrid")
+    return (
+        routed if explicit_mode else None,
+        routed if use_topic else None,
+        routed if use_header else None,
+        routed if use_body else None,
+        routed if explicit_mode else None,
+    )
 
 
 def build_report(args, success_records, failures, attempts):
@@ -252,42 +415,38 @@ def report_markdown(report):
 
 def main():
     args = parse_args()
+    if args.paper_candidate_mode:
+        args.candidate_count = 5
+        args.augmentation_count = 4
     if args.brower == "chrome" and args.chrome_driver_path is None:
         args.chrome_driver_path = find_default_chromedriver()
     use_llm_topic = use_llm(args, "topic")
     use_llm_header = use_llm(args, "header")
     use_llm_body = use_llm(args, "body")
-    llm_topic_client = None
-    if use_llm_topic:
-        llm_topic_client = LLMTopicClient(
-            api_key=args.llm_topic_api_key,
-            base_url=args.llm_topic_base_url,
-            model=args.llm_topic_model,
-            system_prompt=args.llm_topic_system_prompt,
-        )
-    llm_header_client = None
-    if use_llm_header:
-        llm_header_client = LLMHeaderClient(
-            api_key=args.llm_header_api_key,
-            base_url=args.llm_header_base_url,
-            model=args.llm_header_model,
-            system_prompt=args.llm_header_system_prompt,
-        )
-    llm_body_client = None
-    if use_llm_body:
-        llm_body_client = LLMBodyClient(
-            api_key=args.llm_body_api_key,
-            base_url=args.llm_body_base_url,
-            model=args.llm_body_model,
-            system_prompt=args.llm_body_system_prompt,
-        )
+    core_planner_client, llm_topic_client, llm_header_client, llm_body_client, semantic_evaluator_client = build_semantic_clients(
+        args,
+        use_llm_topic,
+        use_llm_header,
+        use_llm_body,
+    )
     core = CoreAgent(
         llm_topic_client=llm_topic_client,
         llm_header_client=llm_header_client,
         llm_body_client=llm_body_client,
+        core_planner_client=core_planner_client,
+        semantic_evaluator_client=semantic_evaluator_client,
         use_llm_topic=use_llm_topic,
         use_llm_header=use_llm_header,
         use_llm_body=use_llm_body,
+        candidate_count=args.candidate_count,
+        augmentation_count=args.augmentation_count,
+        memory_path=args.memory_path,
+        session_id=args.session_id,
+        max_schema_retries=args.max_schema_retries,
+        max_filling_retries=args.max_filling_retries,
+        max_model_calls=args.max_model_calls,
+        max_elapsed_seconds=args.max_elapsed_seconds,
+        max_candidates=args.max_candidates,
     )
     renderer = RendererTool(
         output=args.output,
@@ -306,9 +465,12 @@ def main():
         gt_path = Path(args.output) / "gt.txt"
         meta_path = Path(args.output) / "meta.jsonl"
         cells_path = Path(args.output) / "cells.jsonl"
+        trace_path = Path(args.output) / "trace.jsonl"
         with open(gt_path, "w", encoding="utf-8") as f_gt, open(
                 meta_path, "w", encoding="utf-8") as f_meta, open(
-                cells_path, "w", encoding="utf-8") as f_cells:
+                cells_path, "w", encoding="utf-8") as f_cells, open(
+                trace_path, "w", encoding="utf-8") as f_trace:
+            trace_recorder = TraceRecorder(f_trace)
             while len(successes) < target and attempts < limit:
                 attempts += 1
                 request = request_for_index(args, len(successes))
@@ -322,7 +484,10 @@ def main():
                         f_cells,
                     )
                     successes.append(meta)
+                    trace_recorder.write(core.last_state, outcome="success")
                 except Exception as error:
+                    if core.last_state is not None:
+                        trace_recorder.write(core.last_state, outcome="failed", error=error)
                     reason = classify_error(error)
                     failures.append({
                         "attempt": attempts,

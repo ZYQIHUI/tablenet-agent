@@ -26,6 +26,7 @@ class LLMBodyClient:
             or env.get("LLM_BODY_SYSTEM_PROMPT")
             or self.DEFAULT_SYSTEM_PROMPT
         )
+        self.last_usage = {}
 
     def generate_body_values(self, domain, language, topic, headers, row_headers, body_cells):
         if not self.api_key or not self.base_url or not self.model:
@@ -58,6 +59,7 @@ class LLMBodyClient:
         )
         with urlopen(request, timeout=self.timeout) as response:
             result = json.loads(response.read().decode("utf-8"))
+        self.last_usage = dict(result.get("usage") or {})
         return result["choices"][0]["message"]["content"]
 
     def _chat_completions_url(self) -> str:

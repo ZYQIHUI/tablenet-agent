@@ -9,6 +9,20 @@ from agents.agent_types import TablePlan
 
 
 class StyleAgentTest(unittest.TestCase):
+    def test_dense_long_content_uses_content_aware_compact_style(self):
+        plan = self.plan(colored=False, lined=True)
+        schema = type("Schema", (), {
+            "rows": 12,
+            "cols": 8,
+            "cells": [type("Cell", (), {"text": "很长的业务字段内容用于测试自适应紧凑样式"})()],
+        })()
+
+        style = StyleAgent().build(plan, schema)
+
+        self.assertEqual(style.visual["padding_mode"], "compact")
+        self.assertLessEqual(style.visual["font_size"], 13)
+        self.assertEqual(style.visual["density"], 96)
+
     def plan(self, colored=True, lined=True):
         return TablePlan(
             domain="telecommunications",

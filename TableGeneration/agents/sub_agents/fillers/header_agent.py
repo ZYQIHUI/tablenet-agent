@@ -1,4 +1,6 @@
 from ...agent_types import TablePlan, TableSchema
+from ...domain.errors import ErrorCode, ValidationIssue
+from ...domain.results import AgentResult, AgentSource
 
 
 class HeaderAgent:
@@ -85,8 +87,18 @@ class HeaderAgent:
     def __init__(self, llm_header_client=None, use_llm=False):
         self.llm_header_client = llm_header_client
         self.use_llm = use_llm
+        self.last_result = None
+        self._last_llm_error = None
 
-    def fill(self, schema: TableSchema, plan: TablePlan) -> TableSchema:
+    def fill(
+            self,
+            schema: TableSchema,
+            plan: TablePlan,
+            target_cells=None,
+            target_columns=None,
+            preserve_existing=False) -> TableSchema:
+        target_cells = set(target_cells or [])
+        target_columns = set(target_columns or [])
         headers = self.HEADERS.get(plan.domain, self.HEADERS["general"])
         group_headers = self.GROUP_HEADERS.get(plan.domain, self.GROUP_HEADERS["general"])
         row_headers = self.ROW_HEADERS.get(plan.domain, self.ROW_HEADERS["general"])
@@ -110,7 +122,34 @@ class HeaderAgent:
                 headers = self._merge_headers(headers, llm_headers.get("headers"))
                 group_headers = self._merge_headers(group_headers, llm_headers.get("group_headers"))
                 row_headers = self._merge_headers(row_headers, llm_headers.get("row_headers"))
+        if plan.template_headers:
+            self.last_result = AgentResult.success(schema, AgentSource.RULE, actual_source="template")
+        elif not self.use_llm:
+            self.last_result = AgentResult.success(schema, AgentSource.RULE, actual_source="rule")
+        elif self._last_llm_error:
+            self.last_result = AgentResult.fallback(
+                schema,
+                AgentSource.RULE,
+                errors=[ValidationIssue(ErrorCode.LLM_CALL_FAILED, self._last_llm_error)],
+                actual_source="rule",
+                fallback_reason=self._last_llm_error,
+                backend_metadata=self._backend_metadata(),
+            )
+        else:
+            self.last_result = AgentResult.success(
+                schema,
+                self._client_source(),
+                actual_source=self._client_source().value,
+                backend_metadata=self._backend_metadata(),
+            )
         for cell in schema.cells:
+            targeted = (
+                not target_cells and not target_columns
+                or (cell.row, cell.col) in target_cells
+                or cell.col in target_columns
+            )
+            if preserve_existing and not targeted:
+                continue
             if cell.role == "title":
                 cell.text = plan.topic
             elif cell.role == "header":
@@ -119,7 +158,10 @@ class HeaderAgent:
 
     def _headers_from_llm(self, plan: TablePlan):
         if not self.use_llm or self.llm_header_client is None:
+            if self.use_llm:
+                self._last_llm_error = "no header model client configured"
             return None
+        self._last_llm_error = None
         try:
             generated = self.llm_header_client.generate_headers(
                 domain=plan.domain,
@@ -127,9 +169,22 @@ class HeaderAgent:
                 topic=plan.topic,
                 cols=plan.cols,
             )
-        except Exception:
+        except Exception as exc:
+            self._last_llm_error = str(exc)
             return None
-        return self._normalize_llm_headers(generated)
+        normalized = self._normalize_llm_headers(generated)
+        if normalized is None:
+            self._last_llm_error = "header model returned an invalid response"
+        return normalized
+
+    def _client_source(self):
+        if getattr(self.llm_header_client, "backend_source", "api") == "local_model":
+            return AgentSource.LOCAL_MODEL
+        return AgentSource.API
+
+    def _backend_metadata(self):
+        result = getattr(self.llm_header_client, "last_result", None)
+        return getattr(result, "metadata", {})
 
     def _normalize_llm_headers(self, generated):
         if not isinstance(generated, dict):

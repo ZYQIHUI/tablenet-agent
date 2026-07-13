@@ -59,17 +59,12 @@ class SchemaAgent:
             "multi_level_column_header": self._multi_level_column_header,
         }
         if structure_type == "multi_level_column_header" and plan.rows < 5:
-            return self._mixed_headers(plan)
+            raise ValueError(
+                "unsupported request: multi_level_column_header requires at least 5 rows"
+            )
         builder = builders.get(structure_type)
         if builder is None:
-            return random.choice([
-                self._grouped_columns,
-                self._left_headers,
-                self._body_rowspan,
-                self._mixed_headers,
-                self._two_axis_header,
-                self._summary_row_colspan,
-            ])(plan)
+            raise ValueError(f"unsupported request: unknown structure_type={structure_type}")
         return builder(plan)
 
     def _title_header(self, plan: TablePlan) -> TableSchema:

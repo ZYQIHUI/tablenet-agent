@@ -26,6 +26,7 @@ class LLMHeaderClient:
             or env.get("LLM_HEADER_SYSTEM_PROMPT")
             or self.DEFAULT_SYSTEM_PROMPT
         )
+        self.last_usage = {}
 
     def generate_headers(self, domain: str, language: str, topic: str, cols: int):
         if not self.api_key or not self.base_url or not self.model:
@@ -58,6 +59,7 @@ class LLMHeaderClient:
         )
         with urlopen(request, timeout=self.timeout) as response:
             result = json.loads(response.read().decode("utf-8"))
+        self.last_usage = dict(result.get("usage") or {})
         return result["choices"][0]["message"]["content"]
 
     def _chat_completions_url(self) -> str:

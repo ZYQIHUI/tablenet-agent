@@ -48,7 +48,36 @@ class BadJsonTopicClient(LLMTopicClient):
 
 
 class LLMFallbackTest(unittest.TestCase):
-    def test_topic_agent_uses_llm_plan_and_clamps_shape(self):
+    def test_unknown_structure_type_fails_explicitly(self):
+        request = TableRequest(
+            structure_type="not_a_real_structure",
+            simple=False,
+            min_rows=6,
+            max_rows=6,
+            min_cols=4,
+            max_cols=4,
+        )
+        plan = TopicAgent(use_llm=False).plan(request)
+
+        with self.assertRaisesRegex(ValueError, "unsupported request"):
+            SchemaAgent().build(plan)
+
+    def test_multi_level_request_is_raised_to_minimum_supported_rows(self):
+        request = TableRequest(
+            structure_type="multi_level_column_header",
+            simple=False,
+            min_rows=4,
+            max_rows=6,
+            min_cols=4,
+            max_cols=4,
+        )
+        plan = TopicAgent(use_llm=False).plan(request)
+
+        self.assertGreaterEqual(plan.rows, 5)
+        schema = SchemaAgent().build(plan)
+        self.assertEqual(schema.header_type, "multi_level_column_header")
+
+    def test_topic_agent_uses_llm_topic_without_allowing_shape_or_style_override(self):
         client = FakeTopicClient({
             "topic": "政企专线服务质量日报",
             "domain": "telecommunications",
@@ -57,16 +86,25 @@ class LLMFallbackTest(unittest.TestCase):
             "cols": 1,
             "attributes": {"simple": False, "colored": True, "lined": False},
         })
-        request = TableRequest(domain="telecommunications", min_rows=4, max_rows=6, min_cols=3, max_cols=5)
+        request = TableRequest(
+            domain="telecommunications",
+            min_rows=6,
+            max_rows=6,
+            min_cols=3,
+            max_cols=3,
+            simple=True,
+            colored=False,
+            lined=True,
+        )
         plan = TopicAgent(llm_topic_client=client, use_llm=True).plan(request)
         self.assertEqual(client.calls, 1)
         self.assertEqual(plan.topic, "政企专线服务质量日报")
         self.assertEqual(plan.semantic_scenario, "enterprise_service_quality")
         self.assertEqual(plan.rows, 6)
         self.assertEqual(plan.cols, 3)
-        self.assertFalse(plan.simple)
-        self.assertTrue(plan.colored)
-        self.assertFalse(plan.lined)
+        self.assertTrue(plan.simple)
+        self.assertFalse(plan.colored)
+        self.assertTrue(plan.lined)
 
     def test_bad_json_topic_client_falls_back_to_rules(self):
         client = BadJsonTopicClient(api_key="key", base_url="https://example.invalid/v1", model="fake")

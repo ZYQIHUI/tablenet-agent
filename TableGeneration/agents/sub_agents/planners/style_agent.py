@@ -6,8 +6,8 @@ from ...agent_types import TablePlan, TableStyle
 class StyleAgent:
     """Chooses visual styling attributes for rendered tables."""
 
-    def build(self, plan: TablePlan) -> TableStyle:
-        visual = self._visual_attributes(plan)
+    def build(self, plan: TablePlan, schema=None) -> TableStyle:
+        visual = self._visual_attributes(plan, schema)
         line_name, table_border, cell_border, header_border = self._line_style(plan, visual)
         header_bg = f"background:{visual['header_background']};" if plan.colored else ""
         body_bg = f"background:{visual['body_background']};" if plan.colored else ""
@@ -22,16 +22,36 @@ class StyleAgent:
             visual=visual,
         )
 
-    def _visual_attributes(self, plan: TablePlan):
-        padding = random.choice([
-            ("compact", "4px 10px", "5px 12px"),
-            ("regular", "6px 14px", "7px 16px"),
-            ("loose", "8px 18px", "9px 20px"),
-        ])
+    def _visual_attributes(self, plan: TablePlan, schema=None):
+        rows = getattr(schema, "rows", plan.rows)
+        cols = getattr(schema, "cols", plan.cols)
+        texts = [cell.text for cell in getattr(schema, "cells", []) if cell.text]
+        max_text_length = max((len(text) for text in texts), default=0)
+        density = rows * cols
+        if density >= 60 or max_text_length >= 18:
+            padding = ("compact", "4px 8px", "5px 10px")
+            font_size = random.choice([12, 13])
+        elif density >= 30 or max_text_length >= 10:
+            padding = random.choice([
+                ("compact", "4px 10px", "5px 12px"),
+                ("regular", "6px 12px", "7px 14px"),
+            ])
+            font_size = random.choice([12, 13, 14])
+        else:
+            padding = random.choice([
+                ("regular", "6px 14px", "7px 16px"),
+                ("loose", "8px 18px", "9px 20px"),
+            ])
+            font_size = random.choice([13, 14, 15])
+        fonts = (
+            ["Arial", "Times New Roman", "Microsoft YaHei"]
+            if plan.language == "en"
+            else ["Microsoft YaHei", "SimSun", "SimHei", "Arial"]
+        )
         background_mode = random.choice(["plain", "zebra", "soft_fill"]) if plan.colored else "plain"
         return {
-            "font_family": random.choice(["Microsoft YaHei", "SimSun", "SimHei", "Arial", "Times New Roman"]),
-            "font_size": random.choice([12, 13, 14, 15]),
+            "font_family": random.choice(fonts),
+            "font_size": font_size,
             "padding_mode": padding[0],
             "cell_padding": padding[1],
             "header_padding": padding[2],
@@ -42,6 +62,8 @@ class StyleAgent:
             "body_background": "#fff7e6" if background_mode != "plain" else "white",
             "zebra_background": random.choice(["#f7fbff", "#f8f8f8", "#fffaf0"]),
             "border_weight": random.choice(["thin", "regular", "strong"]),
+            "density": density,
+            "max_text_length": max_text_length,
         }
 
     def _line_style(self, plan: TablePlan, visual):

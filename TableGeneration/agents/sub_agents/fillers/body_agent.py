@@ -2,6 +2,8 @@ import os
 import random
 
 from ...agent_types import TablePlan, TableSchema
+from ...domain.errors import ErrorCode, ValidationIssue
+from ...domain.results import AgentResult, AgentSource
 
 
 def _load_corpus(path):
@@ -48,6 +50,8 @@ class BodyAgent:
         self.use_llm = use_llm
         self.ch_corpus = _load_corpus(ch_corpus_path) if ch_corpus_path else ""
         self.en_corpus = _load_corpus(en_corpus_path) if en_corpus_path else ""
+        self.last_result = None
+        self._last_llm_error = None
         # Minimal corpus for English fallback
         if not self.en_corpus:
             self.en_corpus = "abcdefghijklmnopqrstuvwxyz"
@@ -65,16 +69,47 @@ class BodyAgent:
         # Ultimate fallback — unchanged small pool
         return random.choice(self.STATUS)
 
-    def fill(self, schema: TableSchema, plan: TablePlan) -> TableSchema:
+    def fill(
+            self,
+            schema: TableSchema,
+            plan: TablePlan,
+            target_cells=None,
+            target_columns=None,
+            preserve_existing=False) -> TableSchema:
+        target_cells = set(target_cells or [])
+        target_columns = set(target_columns or [])
         headers = self._headers_by_col(schema)
         row_headers = self._row_headers_by_row(schema)
-        llm_result = self._values_from_llm(schema, plan, headers, row_headers)
+        selected_cells = [
+            cell for cell in schema.cells
+            if cell.role == "body" and self._is_targeted(cell, target_cells, target_columns)
+        ]
+        llm_result = self._values_from_llm(
+            schema,
+            plan,
+            headers,
+            row_headers,
+            selected_cells=selected_cells,
+        )
         if llm_result:
             llm_values, body_cells = llm_result
-            if self._apply_llm_values(schema, body_cells, llm_values, plan.language):
+            if self._apply_llm_values(
+                    schema,
+                    body_cells,
+                    llm_values,
+                    plan.language,
+                    selected_cells=selected_cells):
+                self.last_result = AgentResult.success(
+                    schema,
+                    self._client_source(),
+                    actual_source=self._client_source().value,
+                    backend_metadata=self._backend_metadata(),
+                )
                 return schema
         for cell in schema.cells:
             if cell.role != "body":
+                continue
+            if preserve_existing and not self._is_targeted(cell, target_cells, target_columns):
                 continue
             header = headers.get(cell.col, "")
             if any(keyword in header for keyword in ("区域", "所属区域", "装机区域")):
@@ -103,11 +138,35 @@ class BodyAgent:
                 cell.text = random.choice(self.STATUS)
             else:
                 cell.text = self._text(plan.language)
+        if self.use_llm:
+            reason = self._last_llm_error or "body model returned an invalid response"
+            self.last_result = AgentResult.fallback(
+                schema,
+                AgentSource.RULE,
+                errors=[ValidationIssue(ErrorCode.LLM_CALL_FAILED, reason)],
+                actual_source="rule",
+                fallback_reason=reason,
+                backend_metadata=self._backend_metadata(),
+            )
+        else:
+            self.last_result = AgentResult.success(schema, AgentSource.RULE, actual_source="rule")
         return schema
 
-    def _values_from_llm(self, schema: TableSchema, plan: TablePlan, headers, row_headers):
+    def _values_from_llm(
+            self,
+            schema: TableSchema,
+            plan: TablePlan,
+            headers,
+            row_headers,
+            selected_cells=None):
         if not self.use_llm or self.llm_body_client is None:
+            if self.use_llm:
+                self._last_llm_error = "no body model client configured"
             return None
+        self._last_llm_error = None
+        selected_positions = None
+        if selected_cells is not None:
+            selected_positions = {(cell.row, cell.col) for cell in selected_cells}
         body_cells = [
             {
                 "row": cell.row,
@@ -117,7 +176,9 @@ class BodyAgent:
                 "expected_type": self._expected_type(headers.get(cell.col, "")),
             }
             for cell in sorted(schema.cells, key=lambda item: (item.row, item.col))
-            if cell.role == "body"
+            if cell.role == "body" and (
+                selected_positions is None or (cell.row, cell.col) in selected_positions
+            )
         ]
         try:
             values = self.llm_body_client.generate_body_values(
@@ -128,17 +189,38 @@ class BodyAgent:
                 row_headers=row_headers,
                 body_cells=body_cells,
             )
-        except Exception:
+        except Exception as exc:
+            self._last_llm_error = str(exc)
             return None
         if not values:
+            self._last_llm_error = "body model returned an empty response"
             return None
         return values, body_cells
 
-    def _apply_llm_values(self, schema: TableSchema, body_cells, values,
-                          language="zh"):
+    def _client_source(self):
+        if getattr(self.llm_body_client, "backend_source", "api") == "local_model":
+            return AgentSource.LOCAL_MODEL
+        return AgentSource.API
+
+    def _backend_metadata(self):
+        result = getattr(self.llm_body_client, "last_result", None)
+        return getattr(result, "metadata", {})
+
+    def _apply_llm_values(
+            self,
+            schema: TableSchema,
+            body_cells,
+            values,
+            language="zh",
+            selected_cells=None):
+        selected_positions = None
+        if selected_cells is not None:
+            selected_positions = {(cell.row, cell.col) for cell in selected_cells}
         schema_body_cells = [
             cell for cell in sorted(schema.cells, key=lambda item: (item.row, item.col))
-            if cell.role == "body"
+            if cell.role == "body" and (
+                selected_positions is None or (cell.row, cell.col) in selected_positions
+            )
         ]
         if isinstance(values, dict):
             values = self._values_from_mapping(schema_body_cells, values)
@@ -160,6 +242,11 @@ class BodyAgent:
                 language=language,
             )
         return True
+
+    def _is_targeted(self, cell, target_cells, target_columns):
+        if not target_cells and not target_columns:
+            return True
+        return (cell.row, cell.col) in target_cells or cell.col in target_columns
 
     def _values_from_mapping(self, schema_body_cells, values):
         ordered = []

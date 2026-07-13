@@ -19,6 +19,9 @@ class FillingCheckReport:
     dimension_scores: Dict[str, float] = field(default_factory=dict)
     column_scores: Dict[int, float] = field(default_factory=dict)
     cell_scores: Dict[Tuple[int, int], float] = field(default_factory=dict)
+    llm_topic_score: Optional[float] = None
+    llm_semantic_score: Optional[float] = None
+    semantic_evaluator: Dict[str, object] = field(default_factory=dict)
 
 
 class FillingChecker:
@@ -63,8 +66,9 @@ class FillingChecker:
     }
     DEFAULT_MIN_SCORE = 0.58
 
-    def __init__(self, min_score: float = DEFAULT_MIN_SCORE):
+    def __init__(self, min_score: float = DEFAULT_MIN_SCORE, semantic_evaluator=None):
         self.min_score = min_score
+        self.semantic_evaluator = semantic_evaluator
 
     def evaluate(self, schema: TableSchema, plan: TablePlan, min_score: Optional[float] = None) -> FillingCheckReport:
         headers = self._headers_by_col(schema)
@@ -77,6 +81,15 @@ class FillingChecker:
         header_score = self._score_headers(schema, plan, headers, errors, warnings, column_scores)
         body_score = self._score_body(schema, headers, errors, warnings, cell_scores, column_scores)
         topic_consistency_score = self._score_topic_consistency(schema, plan, headers, errors, warnings)
+        llm_evaluation = None
+        if self.semantic_evaluator is not None:
+            llm_evaluation = self.semantic_evaluator.evaluate(schema, plan)
+            if llm_evaluation is not None:
+                if llm_evaluation["topic_score"] < self.min_score:
+                    errors.append("LLM evaluator rejected topic relevance")
+                if llm_evaluation["semantic_score"] < self.min_score:
+                    errors.append("LLM evaluator rejected semantic consistency")
+                errors.extend(llm_evaluation.get("errors", []))
 
         score = round(
             0.18 * title_score +
@@ -107,6 +120,9 @@ class FillingChecker:
             },
             column_scores=column_scores,
             cell_scores=cell_scores,
+            llm_topic_score=(round(llm_evaluation["topic_score"], 4) if llm_evaluation else None),
+            llm_semantic_score=(round(llm_evaluation["semantic_score"], 4) if llm_evaluation else None),
+            semantic_evaluator=(llm_evaluation or {}),
         )
 
     def check(self, schema: TableSchema, plan: TablePlan):

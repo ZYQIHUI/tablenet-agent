@@ -105,8 +105,10 @@ class RendererTool:
             "semantic_scenario": table.plan.semantic_scenario,
             "requested_structure_type": table.plan.structure_type,
             "topic": table.plan.topic,
-            "rows": table.plan.rows,
-            "cols": table.plan.cols,
+            "rows": table.schema.rows,
+            "cols": table.schema.cols,
+            "requested_rows": table.plan.rows,
+            "requested_cols": table.plan.cols,
             "simple": table.plan.simple,
             "colored": table.plan.colored,
             "lined": table.plan.lined,
@@ -121,7 +123,10 @@ class RendererTool:
     @staticmethod
     def _cell_annotations(table, contens, img_file_name):
         cells = []
-        sorted_cells = sorted(table.schema.cells, key=lambda cell: cell.cell_id)
+        # HtmlBuilder emits cells in row/column order and assigns DOM ids there.
+        # Spacing transformations preserve lineage cell_id, so cell_id order is
+        # not a reliable rendering order after copy/swap.
+        sorted_cells = sorted(table.schema.cells, key=lambda cell: (cell.row, cell.col))
         for cell, content in zip(sorted_cells, contens):
             text = content[1]
             bbox = content[2]

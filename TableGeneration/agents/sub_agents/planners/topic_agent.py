@@ -2,10 +2,12 @@ import random
 from typing import Callable, Optional
 
 from ...agent_types import TablePlan, TableRequest
+from ...domain.errors import ErrorCode, ValidationIssue
+from ...domain.results import AgentResult, AgentSource
 
 
 class TopicAgent:
-    """Plans the domain topic and high-level table attributes."""
+    """Chooses domain topic/scenario without controlling structure or style."""
 
     TOPICS = {
         "telecommunications": [
@@ -94,13 +96,19 @@ class TopicAgent:
             self,
             llm_topic_client: Optional[object] = None,
             llm_topic_fn: Optional[Callable] = None,
-            use_llm: bool = False):
+            use_llm: bool = False,
+            inner_memory=None):
         self.llm_topic_client = llm_topic_client
         self.llm_topic_fn = llm_topic_fn
         self.use_llm = use_llm
+        self.inner_memory = inner_memory
         self.used_topics = set()
+        self.last_result = None
+        self._last_llm_error = None
 
     def plan(self, request: TableRequest) -> TablePlan:
+        if self.inner_memory is not None:
+            self.used_topics.update(self.inner_memory.topics())
         # Template mode: pre-generated template data takes priority
         if request.template_data:
             tpl = request.template_data
@@ -110,6 +118,17 @@ class TopicAgent:
             colored = request.colored if request.colored is not None else random.random() < 0.4
             lined = request.lined if request.lined is not None else random.random() < 0.7
             self.used_topics.add(tpl.get("topic", ""))
+            if self.inner_memory is not None:
+                self.inner_memory.remember_topic(
+                    tpl.get("topic", ""),
+                    {"domain": tpl.get("domain", request.domain), "source": "template"},
+                )
+            self.last_result = AgentResult.success(
+                tpl,
+                AgentSource.RULE,
+                requested_mode="template",
+                actual_source="template",
+            )
             return TablePlan(
                 domain=tpl.get("domain", request.domain),
                 language=request.language,
@@ -133,18 +152,20 @@ class TopicAgent:
         colored = request.colored if request.colored is not None else random.random() < 0.4
         lined = request.lined if request.lined is not None else random.random() < 0.7
         semantic_scenario, topic, llm_plan = self._choose_topic(request)
-        if llm_plan:
-            rows = self._bounded_int(llm_plan.get("rows"), request.min_rows, request.max_rows, rows)
-            cols = self._bounded_int(llm_plan.get("cols"), request.min_cols, request.max_cols, cols)
-            attributes = llm_plan.get("attributes")
-            if not isinstance(attributes, dict):
-                attributes = llm_plan
-            simple = self._coerce_optional_bool(attributes.get("simple"), simple, request.simple)
-            colored = self._coerce_optional_bool(attributes.get("colored"), colored, request.colored)
-            lined = self._coerce_optional_bool(attributes.get("lined"), lined, request.lined)
+        if request.structure_type == "multi_level_column_header" and rows < 5:
+            if request.max_rows < 5:
+                raise ValueError(
+                    "unsupported request: multi_level_column_header requires max_rows >= 5"
+                )
+            rows = 5
         self.used_topics.add(topic)
+        if self.inner_memory is not None:
+            self.inner_memory.remember_topic(
+                topic,
+                {"domain": request.domain, "scenario": semantic_scenario},
+            )
         return TablePlan(
-            domain=self._normalize_text(llm_plan.get("domain")) if llm_plan and self._normalize_text(llm_plan.get("domain")) else request.domain,
+            domain=request.domain,
             language=request.language,
             topic=topic,
             rows=rows,
@@ -161,12 +182,38 @@ class TopicAgent:
         if self.use_llm:
             topic_plan = self._topic_from_llm(request)
             if topic_plan:
+                self.last_result = AgentResult.success(
+                    topic_plan,
+                    self._client_source(),
+                    requested_mode="model",
+                    actual_source=self._client_source().value,
+                    backend_metadata=self._backend_metadata(),
+                )
                 scenario = self._normalize_text(topic_plan.get("semantic_scenario")) or "llm_generated"
                 return scenario, topic_plan["topic"], topic_plan
         scenario, topic = self._topic_from_rules(request)
+        if self.use_llm:
+            reason = self._last_llm_error or "model output was unavailable or invalid"
+            self.last_result = AgentResult.fallback(
+                {"topic": topic, "semantic_scenario": scenario},
+                AgentSource.RULE,
+                errors=[ValidationIssue(ErrorCode.LLM_CALL_FAILED, reason)],
+                requested_mode="model",
+                actual_source="rule",
+                fallback_reason=reason,
+                backend_metadata=self._backend_metadata(),
+            )
+        else:
+            self.last_result = AgentResult.success(
+                {"topic": topic, "semantic_scenario": scenario},
+                AgentSource.RULE,
+                requested_mode="rule",
+                actual_source="rule",
+            )
         return scenario, topic, None
 
     def _topic_from_llm(self, request: TableRequest) -> Optional[dict]:
+        self._last_llm_error = None
         try:
             if self.llm_topic_fn is not None:
                 topic = self._call_topic_fn(request)
@@ -181,10 +228,25 @@ class TopicAgent:
                     max_cols=request.max_cols,
                 )
             else:
+                self._last_llm_error = "no topic model client configured"
                 return None
-        except Exception:
+        except Exception as exc:
+            self._last_llm_error = str(exc)
             return None
-        return self._normalize_topic_plan(topic, request)
+        normalized = self._normalize_topic_plan(topic, request)
+        if normalized is None:
+            self._last_llm_error = "topic model returned an invalid or duplicate plan"
+        return normalized
+
+    def _client_source(self):
+        source = getattr(self.llm_topic_client, "backend_source", "api")
+        if source == "local_model":
+            return AgentSource.LOCAL_MODEL
+        return AgentSource.API
+
+    def _backend_metadata(self):
+        result = getattr(self.llm_topic_client, "last_result", None)
+        return getattr(result, "metadata", {})
 
     def _call_topic_fn(self, request: TableRequest):
         try:
